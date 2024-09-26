@@ -1,0 +1,11 @@
+stereo_image_publisher_node:
+  ros__parameters:
+    P1: 8
+    P2: 32
+    minDisparity: 0
+    numDisparities: 16
+    blockSize: 5
+    uniquenessRatio: 15
+    speckleWindowSize: 100
+    speckleRange: 2
+
