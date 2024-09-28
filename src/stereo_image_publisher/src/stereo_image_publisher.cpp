@@ -86,162 +86,6 @@ bool setFrameRate(CameraPtr pCam, double frameRate)
     }
 }
 
-// Disables or enables heartbeat on GEV cameras so debugging does not incur timeout errors
-bool ConfigureGVCPHeartbeat(CameraPtr pCam, bool enableHeartbeat)
-{
-	// Retrieve TL device nodemap
-	INodeMap& nodeMapTLDevice = pCam->GetTLDeviceNodeMap();
-
-	// Retrieve GenICam nodemap
-	INodeMap& nodeMap = pCam->GetNodeMap();
-
-	CEnumerationPtr ptrDeviceType = nodeMapTLDevice.GetNode("DeviceType");
-	if (!IsReadable(ptrDeviceType))
-	{
-		return false;
-	}
-
-	if (ptrDeviceType->GetIntValue() != DeviceType_GigEVision)
-	{
-		return true;
-	}
-
-	if (enableHeartbeat)
-	{
-		cout << endl << "Resetting heartbeat..." << endl << endl;
-	}
-	else
-	{
-		cout << endl << "Disabling heartbeat..." << endl << endl;
-	}
-
-	CBooleanPtr ptrDeviceHeartbeat = nodeMap.GetNode("GevGVCPHeartbeatDisable");
-	if (!IsWritable(ptrDeviceHeartbeat))
-	{
-		cout << "Unable to configure heartbeat. Continuing with execution as this may be non-fatal..." << endl << endl;
-	}
-	else
-	{
-		ptrDeviceHeartbeat->SetValue(!enableHeartbeat);
-
-		if (!enableHeartbeat)
-		{
-			cout << "WARNING: Heartbeat has been disabled for the rest of this example run." << endl;
-			cout << "         Heartbeat will be reset upon the completion of this run.  If the " << endl;
-			cout << "         example is aborted unexpectedly before the heartbeat is reset, the" << endl;
-			cout << "         camera may need to be power cycled to reset the heartbeat." << endl << endl;
-		}
-		else
-		{
-			cout << "Heartbeat has been reset." << endl;
-		}
-	}
-
-	return true;
-}
-
-bool ResetGVCPHeartbeat(CameraPtr pCam)
-{
-	return ConfigureGVCPHeartbeat(pCam, true);
-}
-
-bool DisableGVCPHeartbeat(CameraPtr pCam)
-{
-	return ConfigureGVCPHeartbeat(pCam, false);
-}
-
-bool SetAcquisitionMode(INodeMap& nodeMap)
-{
-	//
-	// Set acquisition mode to continuous
-	//
-	// Retrieve enumeration node from nodemap
-	CEnumerationPtr ptrAcquisitionMode = nodeMap.GetNode("AcquisitionMode");
-	if (!IsReadable(ptrAcquisitionMode) || !IsWritable(ptrAcquisitionMode))
-	{
-		cout << "Unable to set acquisition mode to continuous (enum retrieval). Aborting..." << endl << endl;
-		return false;
-	}
-
-	// Retrieve entry node from enumeration node
-	CEnumEntryPtr ptrAcquisitionModeContinuous = ptrAcquisitionMode->GetEntryByName("Continuous");
-	if (!IsReadable(ptrAcquisitionModeContinuous))
-	{
-		cout << "Unable to get or set acquisition mode to continuous (entry retrieval). Aborting..." << endl << endl;
-		return false;
-	}
-
-	// Retrieve integer value from entry node
-	const int64_t acquisitionModeContinuous = ptrAcquisitionModeContinuous->GetValue();
-
-	// Set integer value from entry node as new value of enumeration node
-	ptrAcquisitionMode->SetIntValue(acquisitionModeContinuous);
-
-	return true;
-}
-
-bool SetStreamBufferHandlingMode(INodeMap& nodeMapTLDevice)
-{
-	// Set the StreamBufferHandlingMode
-	CEnumerationPtr ptrHandlingMode = nodeMapTLDevice.GetNode("StreamBufferHandlingMode");
-	if (!IsReadable(ptrHandlingMode) || !IsWritable(ptrHandlingMode))
-	{
-		cout << "Unable to read or write to StreamBufferHandlingMode node. Aborting..." << endl << endl;
-		return false;
-	}
-
-	cout << "Set Handling mode to OldestFirst" << endl;
-	CEnumEntryPtr ptrHandlingModeEntry = ptrHandlingMode->GetEntryByName("OldestFirst");
-	if (!IsReadable(ptrHandlingModeEntry))
-	{
-		cout << "Unable to read ptrHandlingModeEntry node. Aborting..." << endl << endl;
-		return false;
-	}
-
-	int64_t ptrHandlingModeEntryVal = ptrHandlingModeEntry->GetValue();
-	ptrHandlingMode->SetIntValue(ptrHandlingModeEntryVal);
-
-	return true;
-}
-
-bool ConfigureAcquisition(
-	CameraPtr pCam,
-	StereoParameters& stereoParameters,
-	bool doSetTransmittedStreams,
-	std::map<SpinStereo::CameraStreamType, ImagePtr>& imageMap)
-{
-	bool result = true;
-
-	// Retrieve GenICam nodemap
-	INodeMap& nodeMapTLDevice = pCam->GetTLStreamNodeMap();
-
-	// there are 3 nodeMaps (map to the 3 node maps in SpinView):
-	// - nodeMapCamera - the nodemap for the camera
-	// - nodeMapTLDevice - the nodemap for the TLDevice
-	// - nodeMapStreamGrabber - the nodemap for the StreamGrabber
-	INodeMap& nodeMapCamera = pCam->GetNodeMap();
-
-	// Configure heartbeat for GEV camera
-#ifdef _DEBUG
-	result = result && DisableGVCPHeartbeat(pCam);
-#else
-	result = result && ResetGVCPHeartbeat(pCam);
-#endif
-
-	gcstring cameraSerialNumber = pCam->TLDevice.DeviceSerialNumber.GetValue();
-	cout << "camera serial number: " << cameraSerialNumber << endl;
-
-	result = result && SetAcquisitionMode(nodeMapCamera);
-
-	result = result && SetStreamBufferHandlingMode(nodeMapTLDevice);
-
-	// Configure the camera streams Enable var, either on the camera from stereoParameters,
-	// or vice versa, depending on doSetTransmittedStreams
-	// Initialize imageMap
-	result = result && SpinStereo::ConfigureCameraStreams(pCam, imageMap, doSetTransmittedStreams, stereoParameters);
-
-	return result;
-}
 
 bool GetStereoProcessingParameters(
 	CameraPtr pCam,
@@ -314,11 +158,11 @@ public:
             for (int j = 0; j < disparityImageCV_uint16.cols; j += decimationFactor) {
                 ushort disparityValue = disparityImageCV_uint16.at<ushort>(i, j);
                 
-                if (disparityValue == stereoParameters.invalidC || disparityValue == 0) {
+                if (disparityValue == stereoParameters.invalidDisparityValue || disparityValue == 0) {
                     continue;  // Skip invalid disparity
                 }
 
-                float disparity = disparityValue * stereoParameters.disparityScaleFactor + (float)stereoParameters.minDisparities;
+                float disparity = disparityValue * stereoParameters.disparityScaleFactor + (float)stereoParameters.minDisparity;
                 if (disparity <= 0) {
                     continue;  // Skip invalid or zero disparity
                 }
@@ -359,18 +203,18 @@ public:
 
         cv::Mat disparityImageCV;
         disparityImageCV_uint16.convertTo(disparityImageCV, CV_32F, stereoParameters.disparityScaleFactor);
-        disparityImageCV = disparityImageCV + (float)stereoParameters.minDisparities;
+        disparityImageCV = disparityImageCV + (float)stereoParameters.minDisparity;
 
         cv::Mat pointCloudImage;
         cv::reprojectImageTo3D(disparityImageCV, pointCloudImage, Q);
         
         for (int i = 0; i < disparityImageCV.rows; i += decimationFactor) {
             for (int j = 0; j < disparityImageCV.cols; j += decimationFactor) {
-                if(stereoParameters.invalidFlag && disparityImageCV_uint16.at<ushort>(i, j) == stereoParameters.invalidC) {
+                if(stereoParameters.doInvalidDisparityCheck && disparityImageCV_uint16.at<ushort>(i, j) == stereoParameters.invalidDisparityValue) {
                     continue;
                 }
 
-                if(disparityImageCV.at<float>(i, j) < (float)stereoParameters.minDisparities || disparityImageCV.at<float>(i, j) > ((float)stereoParameters.minDisparities + 255.0)){
+                if(disparityImageCV.at<float>(i, j) < (float)stereoParameters.minDisparity || disparityImageCV.at<float>(i, j) > ((float)stereoParameters.minDisparity + 255.0)){
                     continue;
                 }
 
@@ -409,32 +253,32 @@ public:
         : Node("stereo_image_publisher_node"), pCam_(pCam), stereoParameters_(stereoParameters), imageMap_(imageMap), streamIndexMap_(streamIndexMap) {
 
         // Conditionally create publishers based on the transmission flags
-        if (stereoParameters_.rawLeftTransmitEnabled) {
+        if (stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled) {
             raw_left_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/raw_left_image", 10);
             RCLCPP_INFO(this->get_logger(), "Raw left image publisher created.");
         }
 
-        if (stereoParameters_.rawRightTransmitEnabled) {
+        if (stereoParameters_.streamTransmitFlags.rawRightTransmitEnabled) {
             raw_right_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/raw_right_image", 10);
             RCLCPP_INFO(this->get_logger(), "Raw right image publisher created.");
         }
 
-        if (stereoParameters_.rectLeftTransmitEnabled) {
+        if (stereoParameters_.streamTransmitFlags.rectLeftTransmitEnabled) {
             rect_left_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/rectified_left_image", 10);
             RCLCPP_INFO(this->get_logger(), "Rectified left image publisher created.");
         }
 
-        if (stereoParameters_.rectRightTransmitEnabled) {
+        if (stereoParameters_.streamTransmitFlags.rectRightTransmitEnabled) {
             rect_right_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/rectified_right_image", 10);
             RCLCPP_INFO(this->get_logger(), "Rectified right image publisher created.");
         }
 
-        if (stereoParameters_.disparityTransmitEnabled) {
+        if (stereoParameters_.streamTransmitFlags.disparityTransmitEnabled) {
             disparity_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/disparity_image", 10);
             RCLCPP_INFO(this->get_logger(), "Disparity image publisher created.");
         }
 
-        if (stereoParameters_.enablePointCloudOutput) {
+        if (stereoParameters_.doComputePointCloud) {
             point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("Bumblebee_X/point_cloud", 100);
             RCLCPP_INFO(this->get_logger(), "Point cloud publisher created.");
         }
@@ -452,8 +296,8 @@ public:
     // Generic function to publish any image (raw or rectified)
     void publishImage(ImagePtr imagePtr, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher, const std::string &encoding, rclcpp::Time timestamp) {
         if (publisher) {
-            cv::Mat cvImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(), CV_8UC4, (unsigned char*)imagePtr->GetData(), imagePtr->GetStride());
-            cv::cvtColor(cvImage, cvImage, cv::COLOR_BGRA2BGR);  // Convert to BGR for ROS
+            cv::Mat cvImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(), CV_8UC3, (unsigned char*)imagePtr->GetData(), imagePtr->GetStride());
+            cv::cvtColor(cvImage, cvImage, cv::COLOR_RGB2BGR);  // Convert to BGR for ROS
 
             // Convert to ROS Image message
             auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), encoding, cvImage).toImageMsg();
@@ -465,7 +309,7 @@ public:
     // Function to publish disparity image
     void publishDisparityImage(ImagePtr imagePtr, rclcpp::Time timestamp) {
         if (disparity_image_publisher_) {
-            cv::Mat disparityImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(), CV_16SC1, (unsigned char*)imagePtr->GetData(), imagePtr->GetStride());
+            cv::Mat disparityImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(), CV_16UC1, (unsigned char*)imagePtr->GetData(), imagePtr->GetStride());
 
             // Convert to ROS Image message
             auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "mono16", disparityImage).toImageMsg();
@@ -527,19 +371,19 @@ private:
 
 
     void declareParameters(StereoParameters stereoParameters_) {
-        this->declare_parameter<int>("minDisp", stereoParameters_.minDisparities);
+        this->declare_parameter<double>("minDisp", stereoParameters_.minDisparity);
         this->declare_parameter<int>("SGBMP1", stereoParameters_.SGBMP1);
         this->declare_parameter<int>("SGBMP2", stereoParameters_.SGBMP2);
         this->declare_parameter<int>("uniquenessRatio", stereoParameters_.uniquenessRatio);
         this->declare_parameter<bool>("postProcessDisparity", stereoParameters_.postProcessDisparity);
         this->declare_parameter<int>("maxSpeckleSize", stereoParameters_.maxSpeckleSize);
         this->declare_parameter<double>("maxDiff", stereoParameters_.maxDiff);
-        this->declare_parameter<bool>("rawLeftEnabled", stereoParameters_.rawLeftTransmitEnabled);
-        this->declare_parameter<bool>("rawRightEnabled", stereoParameters_.rawRightTransmitEnabled);
-        this->declare_parameter<bool>("rectLeftEnabled", stereoParameters_.rectLeftTransmitEnabled);
-        this->declare_parameter<bool>("rectRightEnabled", stereoParameters_.rectRightTransmitEnabled);
-        this->declare_parameter<bool>("disparityTransmitEnabled", stereoParameters_.disparityTransmitEnabled);
-        this->declare_parameter<bool>("pointCloudEnabled", stereoParameters_.enablePointCloudOutput);
+        this->declare_parameter<bool>("rawLeftEnabled", stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled);
+        this->declare_parameter<bool>("rawRightEnabled", stereoParameters_.streamTransmitFlags.rawRightTransmitEnabled);
+        this->declare_parameter<bool>("rectLeftEnabled", stereoParameters_.streamTransmitFlags.rectLeftTransmitEnabled);
+        this->declare_parameter<bool>("rectRightEnabled", stereoParameters_.streamTransmitFlags.rectRightTransmitEnabled);
+        this->declare_parameter<bool>("disparityTransmitEnabled", stereoParameters_.streamTransmitFlags.disparityTransmitEnabled);
+        this->declare_parameter<bool>("pointCloudEnabled", stereoParameters_.doComputePointCloud);
 
     }
 
@@ -549,11 +393,12 @@ private:
         result.successful = true;
         bool updateSGBMParams = false;
         bool updatePostProcessingParams = false;
+        bool updatePublisher = false;
 
         for (const auto &param : params) {
             if (param.get_name() == "minDisp") {
-                stereoParameters_.minDisparities = param.as_int();
-                RCLCPP_INFO(this->get_logger(), "minDisp updated: %d", stereoParameters_.minDisparities);
+                stereoParameters_.minDisparity = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "minDisp updated: %f", stereoParameters_.minDisparity);
                 updateSGBMParams = true;
             }
             else if (param.get_name() == "SGBMP1") {
@@ -572,8 +417,8 @@ private:
                 updateSGBMParams = true;
             }
             else if (param.get_name() == "pointCloudEnabled") {
-                stereoParameters_.enablePointCloudOutput = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "Point cloud transmission: %s", stereoParameters_.enablePointCloudOutput ? "enabled" : "disabled");
+                stereoParameters_.doComputePointCloud = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "Point cloud transmission: %s", stereoParameters_.doComputePointCloud ? "enabled" : "disabled");
             }
             else if (param.get_name() == "postProcessDisparity") {
                 stereoParameters_.postProcessDisparity = param.as_bool();
@@ -588,49 +433,58 @@ private:
                 RCLCPP_INFO(this->get_logger(), "maxDiff updated: %f", stereoParameters_.maxDiff);
             }
             else if (param.get_name() == "rawLeftEnabled") {
-                stereoParameters_.rawLeftTransmitEnabled = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "rawLeftEnabled updated: %s", stereoParameters_.rawLeftTransmitEnabled ? "enabled" : "disabled");
+                stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "rawLeftEnabled updated: %s", stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled ? "enabled" : "disabled");
+                updatePublisher = true;
             } 
             else if (param.get_name() == "rawRightEnabled") {
-                stereoParameters_.rawRightTransmitEnabled = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "rawRightEnabled updated: %s", stereoParameters_.rawRightTransmitEnabled ? "enabled" : "disabled");
+                stereoParameters_.streamTransmitFlags.rawRightTransmitEnabled = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "rawRightEnabled updated: %s", stereoParameters_.streamTransmitFlags.rawRightTransmitEnabled ? "enabled" : "disabled");
+                updatePublisher = true;
             } 
             else if (param.get_name() == "rectLeftEnabled") {
-                stereoParameters_.rectLeftTransmitEnabled = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "rectLeftEnabled updated: %s", stereoParameters_.rectLeftTransmitEnabled ? "enabled" : "disabled");
+                stereoParameters_.streamTransmitFlags.rectLeftTransmitEnabled = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "rectLeftEnabled updated: %s", stereoParameters_.streamTransmitFlags.rectLeftTransmitEnabled ? "enabled" : "disabled");
+                updatePublisher = true;
             } 
             else if (param.get_name() == "rectRightEnabled") {
-                stereoParameters_.rectRightTransmitEnabled = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "rectRightEnabled updated: %s", stereoParameters_.rectRightTransmitEnabled ? "enabled" : "disabled");
+                stereoParameters_.streamTransmitFlags.rectRightTransmitEnabled = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "rectRightEnabled updated: %s", stereoParameters_.streamTransmitFlags.rectRightTransmitEnabled ? "enabled" : "disabled");
+                updatePublisher = true;
             } 
             else if (param.get_name() == "disparityTransmitEnabled") {
-                stereoParameters_.disparityTransmitEnabled = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "disparityTransmitEnabled updated: %s", stereoParameters_.disparityTransmitEnabled ? "enabled" : "disabled");
+                stereoParameters_.streamTransmitFlags.disparityTransmitEnabled = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "disparityTransmitEnabled updated: %s", stereoParameters_.streamTransmitFlags.disparityTransmitEnabled ? "enabled" : "disabled");
+                updatePublisher = true;
             }
         }
  
-        // Stop the acquisition before reconfiguring the streams
-        try 
+        if (updatePublisher)
         {
-            // Reconfigure the camera streams
-            if (!SpinStereo::ConfigureCameraStreams(pCam_, imageMap_, true, stereoParameters_)) {
-                RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", "Could not configure camera streams.");
-                result.successful = false;
-                return result;
-            }
+            RCLCPP_INFO(this->get_logger(), "Configuring streams");
+            try 
+            {
+                // Reconfigure the camera streams
+                if (!SpinStereo::ConfigureCameraStreams(pCam_, imageMap_, true, stereoParameters_.streamTransmitFlags)) {
+                    RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", "Could not configure camera streams.");
+                    result.successful = false;
+                    return result;
+                }
 
-            // Reset stream index map after reconfiguration
-            if (!SpinStereo::SetStreamIndexMap(pCam_, stereoParameters_, streamIndexMap_)) {
-                RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", "Could not set stream index map.");
-                result.successful = false;
-                return result;
-            }
+                // Reset stream index map after reconfiguration
+                if (!SpinStereo::SetStreamIndexMap(pCam_, stereoParameters_.streamTransmitFlags, streamIndexMap_)) {
+                    RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", "Could not set stream index map.");
+                    result.successful = false;
+                    return result;
+                }
 
-        } 
-        catch (const Spinnaker::Exception &e) {
-            RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", e.what());
-            result.successful = false;
+            } 
+            catch (const Spinnaker::Exception &e) {
+                RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", e.what());
+                result.successful = false;
+            }
         }
+
         
         if(updateSGBMParams)
         {
@@ -654,8 +508,8 @@ private:
             return false;
         }
 
-        RCLCPP_INFO(this->get_logger(), "Stereo Parameters: SGBMP1: %d, SGBMP2: %d, minDisparities: %d, uniquenessRatio: %d",
-                    stereoParameters_.SGBMP1, stereoParameters_.SGBMP2, stereoParameters_.minDisparities, stereoParameters_.uniquenessRatio);
+        RCLCPP_INFO(this->get_logger(), "Stereo Parameters: SGBMP1: %d, SGBMP2: %d, minDisparity: %f, uniquenessRatio: %d",
+                    stereoParameters_.SGBMP1, stereoParameters_.SGBMP2, stereoParameters_.minDisparity, stereoParameters_.uniquenessRatio);
 
         // Ensure pCam_ and stereo parameters are valid before calling SetSGBM_params
         if (!SpinStereo::SetSGBM_params(pCam_, stereoParameters_)) {
@@ -674,12 +528,14 @@ int main(int argc, char** argv)
     rclcpp::init(argc, argv);
 
     StereoParameters stereoParameters;
-    stereoParameters.rawLeftTransmitEnabled = false;
-    stereoParameters.rawRightTransmitEnabled = false;
-    stereoParameters.rectLeftTransmitEnabled = true;
-    stereoParameters.rectRightTransmitEnabled = false;
-    stereoParameters.disparityTransmitEnabled = true;
-    stereoParameters.enablePointCloudOutput = true;
+    StreamTransmitFlags& streamTransmitFlags = stereoParameters.streamTransmitFlags;
+
+    // streamTransmitFlags.rawLeftTransmitEnabled = stereoAcquisitionParams.doEnableRawLeftTransmit;
+    // streamTransmitFlags.rawRightTransmitEnabled = stereoAcquisitionParams.doEnableRawRightTransmit;
+    // streamTransmitFlags.rectLeftTransmitEnabled = stereoAcquisitionParams.doEnableRectLeftTransmit;
+    // streamTransmitFlags.rectRightTransmitEnabled = stereoAcquisitionParams.doEnableRectRightTransmit;
+    // streamTransmitFlags.disparityTransmitEnabled = stereoAcquisitionParams.doEnableDisparityTransmit;
+    // stereoParameters.doComputePointCloud = stereoAcquisitionParams.dodoComputePointCloud;
 
     // Retrieve singleton reference to system object
     SystemPtr system = System::GetInstance();
@@ -704,7 +560,7 @@ int main(int argc, char** argv)
     bool doSetTransmittedStreams = true;
 
     // Acquire and publish images
-    ConfigureAcquisition(pCam, stereoParameters, doSetTransmittedStreams, imageMap);
+    ConfigureAcquisition(pCam, stereoParameters.streamTransmitFlags, doSetTransmittedStreams, imageMap);
     GetStereoProcessingParameters(pCam, stereoParameters);
 
     int frameRate = 5;
@@ -715,7 +571,7 @@ int main(int argc, char** argv)
         pCam->BeginAcquisition();
     }
 
-    if (!SetStreamIndexMap(pCam, stereoParameters, streamIndexMap)){
+    if (!SetStreamIndexMap(pCam, stereoParameters.streamTransmitFlags, streamIndexMap)){
         cout << "Failed to set the stream indices." << endl;
         pCam->EndAcquisition();
         return false;
@@ -732,12 +588,12 @@ int main(int argc, char** argv)
     rclcpp::Rate rate(10);
     while (rclcpp::ok()){
         // Capture images from the camera
-        if (!SpinStereo::GetNextImageGrp(pCam, stereoParameters, streamIndexMap, imageMap)){
+        if (!SpinStereo::GetNextImageGrp(pCam, stereoParameters.streamTransmitFlags, streamIndexMap, 1000, imageMap)){
             continue;  // Continue the loop if images can't be retrieved
         }            
         
         // apply post processing if the parameter is on - will be done in library eventually
-        if(stereoParameters.disparityTransmitEnabled && imageMap[CameraStreamType_DISPARITY] != nullptr && stereoParameters.postProcessDisparity){
+        if(stereoParameters.streamTransmitFlags.disparityTransmitEnabled && imageMap[CameraStreamType_DISPARITY] != nullptr && stereoParameters.postProcessDisparity){
             unsigned int width = imageMap[CameraStreamType_DISPARITY]->GetWidth();
             unsigned int height = imageMap[CameraStreamType_DISPARITY]->GetHeight();
             unsigned int stride = imageMap[CameraStreamType_DISPARITY]->GetStride();
@@ -749,7 +605,7 @@ int main(int argc, char** argv)
             cv::medianBlur(disparityImage, disparityImage, 5);
             
             cv::filterSpeckles(disparityImage,
-                                stereoParameters.invalidC,
+                                stereoParameters.invalidDisparityValue,
                                 stereoParameters.maxSpeckleSize,
                                 stereoParameters.maxDiff / stereoParameters.disparityScaleFactor);
 
@@ -760,7 +616,7 @@ int main(int argc, char** argv)
             imageMap[CameraStreamType_DISPARITY] = postProcessedDisparityImage;
         }
 
-        if (stereoParameters.enablePointCloudOutput && imageMap[CameraStreamType_DISPARITY] != nullptr && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {    
+        if (stereoParameters.doComputePointCloud && imageMap[CameraStreamType_DISPARITY] != nullptr && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {    
             pointCloud->clear();
             pointCloudGenerator.computePointCloud(imageMap[CameraStreamType_DISPARITY],
                                                   imageMap[CameraStreamType_RECT_LEFT],
@@ -770,28 +626,28 @@ int main(int argc, char** argv)
 
         auto timestamp = publisherNode->now();
 
-        if (stereoParameters.rawLeftTransmitEnabled && imageMap[CameraStreamType_RAW_LEFT] != nullptr) {
+        if (stereoParameters.streamTransmitFlags.rawLeftTransmitEnabled && imageMap[CameraStreamType_RAW_LEFT] != nullptr) {
             publisherNode->publishImage(imageMap[CameraStreamType_RAW_LEFT], publisherNode->getRawLeftPublisher(), "bgr8", timestamp);
         }
 
-        if (stereoParameters.rawRightTransmitEnabled && imageMap[CameraStreamType_RAW_RIGHT] != nullptr) {
+        if (stereoParameters.streamTransmitFlags.rawRightTransmitEnabled && imageMap[CameraStreamType_RAW_RIGHT] != nullptr) {
             publisherNode->publishImage(imageMap[CameraStreamType_RAW_RIGHT], publisherNode->getRawRightPublisher(), "bgr8", timestamp);
         }
 
-        if (stereoParameters.rectLeftTransmitEnabled && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {
+        if (stereoParameters.streamTransmitFlags.rectLeftTransmitEnabled && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {
             publisherNode->publishImage(imageMap[CameraStreamType_RECT_LEFT], publisherNode->getRectLeftPublisher(), "bgr8", timestamp);
         }
 
-        if (stereoParameters.rectRightTransmitEnabled && imageMap[CameraStreamType_RECT_RIGHT] != nullptr) {
+        if (stereoParameters.streamTransmitFlags.rectRightTransmitEnabled && imageMap[CameraStreamType_RECT_RIGHT] != nullptr) {
             publisherNode->publishImage(imageMap[CameraStreamType_RECT_RIGHT], publisherNode->getRectRightPublisher(), "bgr8", timestamp);
         }
 
         // Publish disparity image
-        if (stereoParameters.disparityTransmitEnabled && imageMap[CameraStreamType_DISPARITY] != nullptr) {
+        if (stereoParameters.streamTransmitFlags.disparityTransmitEnabled && imageMap[CameraStreamType_DISPARITY] != nullptr) {
             publisherNode->publishDisparityImage(imageMap[CameraStreamType_DISPARITY], timestamp);
         }
 
-        if (stereoParameters.enablePointCloudOutput && imageMap[CameraStreamType_DISPARITY] != nullptr && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {
+        if (stereoParameters.doComputePointCloud && imageMap[CameraStreamType_DISPARITY] != nullptr && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {
             publisherNode->publishPointCloud(pointCloud, timestamp);
         }
 

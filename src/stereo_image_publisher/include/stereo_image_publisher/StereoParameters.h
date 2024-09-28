@@ -36,6 +36,28 @@ namespace SpinStereo
      * @{
      */
 
+    struct StreamTransmitFlags
+    {
+        bool rawLeftTransmitEnabled;   ///< Flag to enable raw left image transmission.
+        bool rawRightTransmitEnabled;  ///< Flag to enable raw right image transmission.
+        bool rectLeftTransmitEnabled;  ///< Flag to enable rectified left image transmission.
+        bool rectRightTransmitEnabled; ///< Flag to enable rectified right image transmission.
+        bool disparityTransmitEnabled; ///< Flag to enable disparity image transmission.
+
+        std::string ToString() const
+        {
+            std::stringstream strstr("");
+
+            strstr << "rawLeftTransmitEnabled " << rawLeftTransmitEnabled << std::endl;
+            strstr << "rawRightTransmitEnabled " << rawRightTransmitEnabled << std::endl;
+            strstr << "rectLeftTransmitEnabled " << rectLeftTransmitEnabled << std::endl;
+            strstr << "rectRightTransmitEnabled " << rectRightTransmitEnabled << std::endl;
+            strstr << "disparityTransmitEnabled " << disparityTransmitEnabled;
+
+            return strstr.str();
+        };
+    };
+
     /**
      * @class StereoParameters
      * @brief Class for handling parameters of the S3D camera.
@@ -52,43 +74,34 @@ namespace SpinStereo
          * @brief Converts the parameters to a string representation.
          * @return A string representation of the parameters.
          */
-        std::string ToString();
+        std::string ToString() const;
 
-        unsigned int minDisparities; ///< Minimum number of disparities.
+        float minDisparity; ///< Minimum number of disparities.
         unsigned int numDisparities; ///< Number of disparities.
+        bool doInvalidDisparityCheck;
+        float invalidDisparityValue;
 
-        bool rawLeftTransmitEnabled;   ///< Flag to enable raw left image transmission.
-        bool rawRightTransmitEnabled;  ///< Flag to enable raw right image transmission.
-        bool rectLeftTransmitEnabled;  ///< Flag to enable rectified left image transmission.
-        bool rectRightTransmitEnabled; ///< Flag to enable rectified right image transmission.
-        bool disparityTransmitEnabled; ///< Flag to enable disparity image transmission.
-        bool enablePointCloudOutput;
+        StreamTransmitFlags streamTransmitFlags; ///< Flags to enable streams image transmission.
 
-        int speckleThreshold; ///< Speckle threshold value.
+        bool doComputePointCloud; ///< flag to enable computation of the 3D point cloud.
+
         int uniquenessRatio;  ///< Uniqueness ratio value.
         int SGBMP1;           ///< SGBM P1 parameter.
         int SGBMP2;           ///< SGBM P2 parameter.
 
         bool postProcessDisparity;  ///< Flag to enable disparity post-processing.
-        bool postProcessPointCloud; ///< Flag to enable point cloud post-processing.
 
         int medianWindowSize;    ///< Median filter window size.
-        int speckleRange;        ///< Speckle range value.
-        int filteringWindowSize; ///< Filtering window size.
-        float filteringDistance; ///< Filtering distance value.
-        int maxSpeckleSize;
+        int maxSpeckleSize;        ///< Speckle range value.
         double maxDiff;
 
-        float exposureTime;           ///< Exposure time value.
-        float gainValue;              ///< Gain value.
+        float exposureTime; ///< Exposure time value.
+        float gainValue;    ///< Gain value.
         float focalLength;
         float baseline;
         float fCurrentCentreRow;
         float fCurrentCentreCol;
         PixelFormatEnums pixelFormat; ///< Pixel format enumeration.
-        bool invalidFlag;
-        double invalidC;
-
 
         float disparityScaleFactor;
     };

@@ -29,31 +29,23 @@ namespace SpinStereo
         baseline = 0.0;
         fCurrentCentreRow = 0.0;
         fCurrentCentreCol = 0.0;
-        minDisparities = 0;
+        minDisparity = 0.0;
         numDisparities = 256;
+        doInvalidDisparityCheck = true;
+        invalidDisparityValue = 0.0;
         postProcessDisparity = true;
-        postProcessPointCloud = true;
-        medianWindowSize = 3;
-        invalidFlag = true;
-        invalidC = 0;
         maxSpeckleSize = 40;
-        maxDiff = 4;
-        filteringWindowSize = 3;
-        filteringDistance = 0.1;
+        maxDiff = 4.0f;
         uniquenessRatio = 10;
-        rawLeftTransmitEnabled = false;
-        rawRightTransmitEnabled = false;
-        rectLeftTransmitEnabled = true;
-        rectRightTransmitEnabled = false;
-        disparityTransmitEnabled = true;
-        enablePointCloudOutput = true;
+        streamTransmitFlags = {false, false, true, false, true};
+        doComputePointCloud = true;
         SGBMP1 = 5;
         SGBMP2 = 60;
         pixelFormat = PixelFormat_RGB8Packed;
         disparityScaleFactor = 1.0;
     }
 
-    std::string StereoParameters::ToString()
+    std::string StereoParameters::ToString() const
     {
         std::stringstream strstr("");
 
@@ -63,21 +55,16 @@ namespace SpinStereo
         strstr << "baseline " << baseline << std::endl;
         strstr << "fCurrentCentreRow " << fCurrentCentreRow << std::endl;
         strstr << "fCurrentCentreCol " << fCurrentCentreCol << std::endl;
-        strstr << "minDisparities " << minDisparities << std::endl;
+        strstr << "minDisparity " << minDisparity << std::endl;
         strstr << "numDisparities " << numDisparities << std::endl;
+        strstr << "doInvalidDisparityCheck " << doInvalidDisparityCheck << std::endl;
+        strstr << "invalidDisparityValue " << invalidDisparityValue << std::endl;
         strstr << "postProcessDisparity " << postProcessDisparity << std::endl;
-        strstr << "postProcessPointCloud " << postProcessPointCloud << std::endl;
-        strstr << "medianWindowSize " << medianWindowSize << std::endl;
-        strstr << "speckleRange " << speckleRange << std::endl;
-        strstr << "filteringWindowSize " << filteringWindowSize << std::endl;
-        strstr << "filteringDistance " << filteringDistance << std::endl;
+        strstr << "maxSpeckleSize " << maxSpeckleSize << std::endl;
+        strstr << "maxDiff " << maxDiff << std::endl;
         strstr << "uniquenessRatio " << uniquenessRatio << std::endl;
-        strstr << "rawLeftTransmitEnabled " << rawLeftTransmitEnabled << std::endl;
-        strstr << "rawRightTransmitEnabled " << rawRightTransmitEnabled << std::endl;
-        strstr << "rectLeftTransmitEnabled " << rectLeftTransmitEnabled << std::endl;
-        strstr << "rectRightTransmitEnabled " << rectRightTransmitEnabled << std::endl;
-        strstr << "disparityTransmitEnabled " << disparityTransmitEnabled << std::endl;
-        strstr << "enablePointCloudOutput " << enablePointCloudOutput << std::endl;
+        strstr << streamTransmitFlags.ToString() << std::endl;
+        strstr << "doComputePointCloud " << doComputePointCloud << std::endl;
         strstr << "SGBMP1 " << SGBMP1 << std::endl;
         strstr << "SGBMP2 " << SGBMP2 << std::endl;
         strstr << "pixelFormat " << pixelFormat << std::endl;

@@ -12,8 +12,11 @@ find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(std_msgs REQUIRED)
 
-set(Spinnaker_INCLUDE_DIRS "/opt/spinnaker/include")
-set(Spinnaker_LIBRARIES "/opt/spinnaker/lib/libSpinnaker.so")
+set(Spinnaker_PATH "/home/shubam/zone2/development/spinnaker/builds/dev/4.1.0.304_SDK-8995_2024-09-26_13-33-01/Linux/x64_jammy")
+
+set(Spinnaker_INCLUDE_DIRS "${Spinnaker_PATH}/include")
+set(Spinnaker_LIBRARIES "${Spinnaker_PATH}/lib/libSpinnaker.so")
+
 
 
 # Include directories
