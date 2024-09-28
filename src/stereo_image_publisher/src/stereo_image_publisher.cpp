@@ -252,6 +252,27 @@ public:
                             std::map<SpinStereo::CameraStreamType, int>& streamIndexMap)
         : Node("stereo_image_publisher_node"), pCam_(pCam), stereoParameters_(stereoParameters), imageMap_(imageMap), streamIndexMap_(streamIndexMap) {
 
+        // initialize publisher
+        initializePublishers();
+
+        // Declare and initialize parameters
+        declareParameters(stereoParameters_);
+
+        // Register a callback for dynamic parameter updates
+        parameter_callback_handle_ = this->add_on_set_parameters_callback(
+            std::bind(&StereoImagePublisherNode::parametersCallback, this, std::placeholders::_1)
+        );
+    }
+
+    void initializePublishers(){
+        // Reset all existing publishers before reinitializing
+        raw_left_image_publisher_.reset();
+        raw_right_image_publisher_.reset();
+        rect_left_image_publisher_.reset();
+        rect_right_image_publisher_.reset();
+        disparity_image_publisher_.reset();
+        point_cloud_publisher_.reset();
+
         // Conditionally create publishers based on the transmission flags
         if (stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled) {
             raw_left_image_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("Bumblebee_X/raw_left_image", 10);
@@ -282,15 +303,6 @@ public:
             point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("Bumblebee_X/point_cloud", 100);
             RCLCPP_INFO(this->get_logger(), "Point cloud publisher created.");
         }
-
-
-        // Declare and initialize parameters
-        declareParameters(stereoParameters_);
-
-        // Register a callback for dynamic parameter updates
-        parameter_callback_handle_ = this->add_on_set_parameters_callback(
-            std::bind(&StereoImagePublisherNode::parametersCallback, this, std::placeholders::_1)
-        );
     }
 
     // Generic function to publish any image (raw or rectified)
@@ -478,6 +490,8 @@ private:
                     return result;
                 }
 
+                initializePublishers();
+
             } 
             catch (const Spinnaker::Exception &e) {
                 RCLCPP_ERROR(this->get_logger(), "Error during stream reconfiguration: %s", e.what());
@@ -528,14 +542,6 @@ int main(int argc, char** argv)
     rclcpp::init(argc, argv);
 
     StereoParameters stereoParameters;
-    StreamTransmitFlags& streamTransmitFlags = stereoParameters.streamTransmitFlags;
-
-    // streamTransmitFlags.rawLeftTransmitEnabled = stereoAcquisitionParams.doEnableRawLeftTransmit;
-    // streamTransmitFlags.rawRightTransmitEnabled = stereoAcquisitionParams.doEnableRawRightTransmit;
-    // streamTransmitFlags.rectLeftTransmitEnabled = stereoAcquisitionParams.doEnableRectLeftTransmit;
-    // streamTransmitFlags.rectRightTransmitEnabled = stereoAcquisitionParams.doEnableRectRightTransmit;
-    // streamTransmitFlags.disparityTransmitEnabled = stereoAcquisitionParams.doEnableDisparityTransmit;
-    // stereoParameters.doComputePointCloud = stereoAcquisitionParams.dodoComputePointCloud;
 
     // Retrieve singleton reference to system object
     SystemPtr system = System::GetInstance();
