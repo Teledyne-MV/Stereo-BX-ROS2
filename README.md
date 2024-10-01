@@ -121,16 +121,25 @@ ros2 run stereo_image_publisher stereo_image_publisher
    ```bash
    rviz2
    ```
+   ![rvis2](images/rviz_window.png)
 
 2. Add the topics for image and point cloud:
    - `/Bumblebee_X/raw_left_image`
    - `/Bumblebee_X/disparity_image`
    - `/Bumblebee_X/point_cloud`
 
-3.  Static Transform Pointcloud (Optional)
-   - if camera is upright and facing a target 
+3. Pointcloud Fixed Frame.
+   change this to base_link
+
+   ![base_link](images/rviz_fixed_frame.png)
+
+
+4. Static Transform Pointcloud (Optional)
+   - if camera is upright and facing a target we treat the base as the floor for viewing purposes...
 
       ```bash
+      # -1.5708 rad = -90 degrees
+      # 1.5 meters
       ros2 run tf2_ros static_transform_publisher 0 0 1.5 0 0 -1.5708 base_link camera_link  
       ```
 ### 3. Control Parameters with RQT
