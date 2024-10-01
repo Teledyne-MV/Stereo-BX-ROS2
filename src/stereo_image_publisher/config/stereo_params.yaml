@@ -1,11 +1,45 @@
-stereo_image_publisher_node:
-  ros__parameters:
-    P1: 8
-    P2: 32
-    minDisparity: 0
-    numDisparities: 16
-    blockSize: 5
-    uniquenessRatio: 15
-    speckleWindowSize: 100
-    speckleRange: 2
+stereo_params:
+  SGBMP1: 5
+  SGBMP2: 60
+  uniqueness_ratio: 10
+  min_disparity: 0.0
+  disparity_scale_factor: 0.015625
 
+post_processing_params:
+  post_process_disparity: true
+  invalid_disparity_check: true
+  invalid_disparity_value: 0.0
+  max_speckle_size: 40
+  max_diff: 4.0
+
+calibration_params:
+  focal_length: 0.0
+  baseline: 0.0
+  row_center: 0.0
+  col_center: 0.0
+
+streaming_params:
+  raw_left_enabled: false
+  raw_right_enabled: false
+  rect_left_enabled: true
+  rect_right_enabled: false
+  disparity_enabled: true
+
+camera_params:
+  auto_exposure: true
+  exposure_time: 20000
+  auto_gain: true
+  gain_value: 0.0
+  auto_white_balance: true
+  auto_white_red_value: 1.2
+  auto_white_blue_value: 3.0
+
+point_cloud_params:
+  compute_point_cloud: true
+  decimation_factor: 8
+  x_min: -10.0
+  x_max: 10.0
+  y_min: -10.0
+  y_max: 10.0
+  z_min: 0.0
+  z_max: 20.0

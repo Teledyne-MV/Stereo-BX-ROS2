@@ -142,7 +142,63 @@ public:
 
     }
 
-    bool computePointCloud(const ImagePtr disparityImage, const ImagePtr refImage, StereoParameters stereoParameters, pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
+    // bool computePointCloud(const ImagePtr disparityImage,
+    //                         const ImagePtr refImage,
+    //                         StereoParameters stereoParameters,
+    //                         PointCloudParameters pointCloudParameters,
+    //                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
+    // {
+    //     cv::Mat disparityImageCV_uint16 = cv::Mat(disparityImage->GetHeight(),
+    //                                             disparityImage->GetWidth(),
+    //                                             CV_16UC1,
+    //                                             disparityImage->GetData(),
+    //                                             disparityImage->GetStride());
+                                                        
+    //     unsigned char* refImageData = static_cast<unsigned char*>(refImage->GetData());
+
+    //     pointCloud->points.reserve((disparityImageCV_uint16.rows / decimationFactor) * (disparityImageCV_uint16.cols / decimationFactor));
+
+    //     for (int i = 0; i < disparityImageCV_uint16.rows; i += decimationFactor) {
+    //         for (int j = 0; j < disparityImageCV_uint16.cols; j += decimationFactor) {
+    //             ushort disparityValue = disparityImageCV_uint16.at<ushort>(i, j);
+                
+    //             if (disparityValue == stereoParameters.invalidDisparityValue || disparityValue == 0) {
+    //                 continue;  // Skip invalid disparity
+    //             }
+
+    //             float disparity = disparityValue * stereoParameters.disparityScaleFactor + (float)stereoParameters.minDisparity;
+    //             if (disparity <= 0) {
+    //                 continue;  // Skip invalid or zero disparity
+    //             }
+
+    //             // Compute 3D point using the known Q matrix components
+    //             float Z = fFx * fBx / disparity;
+    //             float X = ((j - fCurrentCentreCol) * Z) / fFx;
+    //             float Y = ((i - fCurrentCentreRow) * Z) / fFx;
+
+    //             pcl::PointXYZRGB point;
+    //             point.x = X;
+    //             point.y = Y;
+    //             point.z = Z;
+
+    //             // Assign color from reference image
+    //             int pixel_idx = (i * disparityImageCV_uint16.cols + j) * 4;  
+    //             point.r = refImageData[pixel_idx + 2];
+    //             point.g = refImageData[pixel_idx + 1];
+    //             point.b = refImageData[pixel_idx];
+
+    //             pointCloud->push_back(point);
+    //         }
+    //     }
+
+    //     return true;
+    // }
+
+    bool computePointCloud(const ImagePtr disparityImage,
+                            const ImagePtr refImage,
+                            StereoParameters stereoParameters,
+                            PointCloudParameters pointCloudParameters,
+                            pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
     {
         cv::Mat disparityImageCV_uint16 = cv::Mat(disparityImage->GetHeight(),
                                                 disparityImage->GetWidth(),
@@ -152,13 +208,20 @@ public:
                                                         
         unsigned char* refImageData = static_cast<unsigned char*>(refImage->GetData());
 
-        pointCloud->points.reserve((disparityImageCV_uint16.rows / decimationFactor) * (disparityImageCV_uint16.cols / decimationFactor));
+        pointCloud->points.reserve((disparityImageCV_uint16.rows / pointCloudParameters.decimationFactor) * 
+                                (disparityImageCV_uint16.cols / pointCloudParameters.decimationFactor));
 
-        for (int i = 0; i < disparityImageCV_uint16.rows; i += decimationFactor) {
-            for (int j = 0; j < disparityImageCV_uint16.cols; j += decimationFactor) {
+        for (int i = pointCloudParameters.ROIImageCoordinatesVMin; 
+                i < std::min(disparityImageCV_uint16.rows, (int)pointCloudParameters.ROIImageCoordinatesVMax); 
+                i += pointCloudParameters.decimationFactor) 
+        {
+            for (int j = pointCloudParameters.ROIImageCoordinatesUMin; 
+                    j < std::min(disparityImageCV_uint16.cols, (int)pointCloudParameters.ROIImageCoordinatesUMax); 
+                    j += pointCloudParameters.decimationFactor) 
+            {
                 ushort disparityValue = disparityImageCV_uint16.at<ushort>(i, j);
                 
-                if (disparityValue == stereoParameters.invalidDisparityValue || disparityValue == 0) {
+                if (stereoParameters.doInvalidDisparityCheck && disparityValue == stereoParameters.invalidDisparityValue) {
                     continue;  // Skip invalid disparity
                 }
 
@@ -172,6 +235,13 @@ public:
                 float X = ((j - fCurrentCentreCol) * Z) / fFx;
                 float Y = ((i - fCurrentCentreRow) * Z) / fFx;
 
+                // Skip points outside the world coordinate bounds
+                if (X < pointCloudParameters.ROIWorldCoordinatesXMin || X > pointCloudParameters.ROIWorldCoordinatesXMax ||
+                    Y < pointCloudParameters.ROIWorldCoordinatesYMin || Y > pointCloudParameters.ROIWorldCoordinatesYMax ||
+                    Z < pointCloudParameters.ROIWorldCoordinatesZMin || Z > pointCloudParameters.ROIWorldCoordinatesZMax) {
+                    continue;  // Skip points outside of specified world bounds
+                }
+
                 pcl::PointXYZRGB point;
                 point.x = X;
                 point.y = Y;
@@ -182,6 +252,68 @@ public:
                 point.r = refImageData[pixel_idx + 2];
                 point.g = refImageData[pixel_idx + 1];
                 point.b = refImageData[pixel_idx];
+
+                pointCloud->push_back(point);
+            }
+        }
+
+        return true;
+    }
+
+
+    bool computePointCloud(const ImagePtr disparityImage,
+                            StereoParameters stereoParameters,
+                            PointCloudParameters pointCloudParameters,
+                            pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
+    {
+        cv::Mat disparityImageCV_uint16 = cv::Mat(disparityImage->GetHeight(),
+                                                disparityImage->GetWidth(),
+                                                CV_16UC1,
+                                                disparityImage->GetData(),
+                                                disparityImage->GetStride());
+
+        pointCloud->points.reserve((disparityImageCV_uint16.rows / pointCloudParameters.decimationFactor) * 
+                                (disparityImageCV_uint16.cols / pointCloudParameters.decimationFactor));
+
+        for (int i = pointCloudParameters.ROIImageCoordinatesVMin; 
+                i < std::min(disparityImageCV_uint16.rows, (int)pointCloudParameters.ROIImageCoordinatesVMax); 
+                i += pointCloudParameters.decimationFactor) 
+        {
+            for (int j = pointCloudParameters.ROIImageCoordinatesUMin; 
+                    j < std::min(disparityImageCV_uint16.cols, (int)pointCloudParameters.ROIImageCoordinatesUMax); 
+                    j += pointCloudParameters.decimationFactor) 
+            {
+                ushort disparityValue = disparityImageCV_uint16.at<ushort>(i, j);
+                
+                if (stereoParameters.doInvalidDisparityCheck && disparityValue == stereoParameters.invalidDisparityValue) {
+                    continue;  // Skip invalid disparity
+                }
+
+                float disparity = disparityValue * stereoParameters.disparityScaleFactor + (float)stereoParameters.minDisparity;
+                if (disparity <= 0) {
+                    continue;  // Skip invalid or zero disparity
+                }
+
+                // Compute 3D point using the known Q matrix components
+                float Z = fFx * fBx / disparity;
+                float X = ((j - fCurrentCentreCol) * Z) / fFx;
+                float Y = ((i - fCurrentCentreRow) * Z) / fFx;
+
+                // Skip points outside the world coordinate bounds
+                if (X < pointCloudParameters.ROIWorldCoordinatesXMin || X > pointCloudParameters.ROIWorldCoordinatesXMax ||
+                    Y < pointCloudParameters.ROIWorldCoordinatesYMin || Y > pointCloudParameters.ROIWorldCoordinatesYMax ||
+                    Z < pointCloudParameters.ROIWorldCoordinatesZMin || Z > pointCloudParameters.ROIWorldCoordinatesZMax) {
+                    continue;  // Skip points outside of specified world bounds
+                }
+
+                pcl::PointXYZRGB point;
+                point.x = X;
+                point.y = Y;
+                point.z = Z;
+
+                point.r = 255;
+                point.g = 255;
+                point.b = 255;
 
                 pointCloud->push_back(point);
             }
@@ -248,15 +380,21 @@ class StereoImagePublisherNode : public rclcpp::Node {
 public:
     StereoImagePublisherNode(CameraPtr& pCam,
                             StereoParameters& stereoParameters,
+                            PointCloudParameters& pointCloudParameters,
                             std::map<SpinStereo::CameraStreamType, ImagePtr>& imageMap,
                             std::map<SpinStereo::CameraStreamType, int>& streamIndexMap)
-        : Node("stereo_image_publisher_node"), pCam_(pCam), stereoParameters_(stereoParameters), imageMap_(imageMap), streamIndexMap_(streamIndexMap) {
+        : Node("stereo_image_publisher_node"),
+          pCam_(pCam),
+          stereoParameters_(stereoParameters),
+          pointCloudParameters_(pointCloudParameters),
+          imageMap_(imageMap),
+          streamIndexMap_(streamIndexMap) {
 
         // initialize publisher
         initializePublishers();
 
         // Declare and initialize parameters
-        declareParameters(stereoParameters_);
+        declareParameters(stereoParameters_, pointCloudParameters_);
 
         // Register a callback for dynamic parameter updates
         parameter_callback_handle_ = this->add_on_set_parameters_callback(
@@ -299,7 +437,7 @@ public:
             RCLCPP_INFO(this->get_logger(), "Disparity image publisher created.");
         }
 
-        if (stereoParameters_.doComputePointCloud) {
+        if (stereoParameters_.doComputePointCloud && stereoParameters_.streamTransmitFlags.disparityTransmitEnabled) {
             point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("Bumblebee_X/point_cloud", 100);
             RCLCPP_INFO(this->get_logger(), "Point cloud publisher created.");
         }
@@ -378,25 +516,45 @@ private:
     OnSetParametersCallbackHandle::SharedPtr parameter_callback_handle_;
     CameraPtr& pCam_;
     StereoParameters& stereoParameters_;
+    PointCloudParameters& pointCloudParameters_;
     std::map<SpinStereo::CameraStreamType, int>& streamIndexMap_;
     std::map<SpinStereo::CameraStreamType, ImagePtr>& imageMap_;
 
 
-    void declareParameters(StereoParameters stereoParameters_) {
+    void declareParameters(StereoParameters stereoParameters_, PointCloudParameters pointCloudParameters_) {        
+        // stereo parameters
         this->declare_parameter<double>("minDisp", stereoParameters_.minDisparity);
         this->declare_parameter<int>("SGBMP1", stereoParameters_.SGBMP1);
         this->declare_parameter<int>("SGBMP2", stereoParameters_.SGBMP2);
         this->declare_parameter<int>("uniquenessRatio", stereoParameters_.uniquenessRatio);
+
+        // post processing parameters
         this->declare_parameter<bool>("postProcessDisparity", stereoParameters_.postProcessDisparity);
         this->declare_parameter<int>("maxSpeckleSize", stereoParameters_.maxSpeckleSize);
         this->declare_parameter<double>("maxDiff", stereoParameters_.maxDiff);
+
+        // stream transmit parameters
         this->declare_parameter<bool>("rawLeftEnabled", stereoParameters_.streamTransmitFlags.rawLeftTransmitEnabled);
         this->declare_parameter<bool>("rawRightEnabled", stereoParameters_.streamTransmitFlags.rawRightTransmitEnabled);
         this->declare_parameter<bool>("rectLeftEnabled", stereoParameters_.streamTransmitFlags.rectLeftTransmitEnabled);
         this->declare_parameter<bool>("rectRightEnabled", stereoParameters_.streamTransmitFlags.rectRightTransmitEnabled);
         this->declare_parameter<bool>("disparityTransmitEnabled", stereoParameters_.streamTransmitFlags.disparityTransmitEnabled);
-        this->declare_parameter<bool>("pointCloudEnabled", stereoParameters_.doComputePointCloud);
 
+        // point cloud parameters
+        this->declare_parameter<bool>("pointCloudEnabled", stereoParameters_.doComputePointCloud);
+        this->declare_parameter<int>("decimationFactor", pointCloudParameters_.decimationFactor);
+        this->declare_parameter<float>("XMin", pointCloudParameters_.ROIWorldCoordinatesXMin);  // X Min
+        this->declare_parameter<float>("XMax", pointCloudParameters_.ROIWorldCoordinatesXMax);  // X Max
+        this->declare_parameter<float>("YMin", pointCloudParameters_.ROIWorldCoordinatesYMin);  // Y Min
+        this->declare_parameter<float>("YMax", pointCloudParameters_.ROIWorldCoordinatesYMax);  // Y Max
+        this->declare_parameter<float>("ZMin", pointCloudParameters_.ROIWorldCoordinatesZMin);  // Z Min
+        this->declare_parameter<float>("ZMax", pointCloudParameters_.ROIWorldCoordinatesZMax);  // Z Max
+
+        // Region of Interest (ROI) in Image Coordinates
+        this->declare_parameter<int>("UMin", pointCloudParameters_.ROIImageCoordinatesUMin);   // U Min
+        this->declare_parameter<int>("VMin", pointCloudParameters_.ROIImageCoordinatesVMin);   // V Min
+        this->declare_parameter<int>("UMax", pointCloudParameters_.ROIImageCoordinatesUMax);   // U Max
+        this->declare_parameter<int>("VMax", pointCloudParameters_.ROIImageCoordinatesVMax);   // V Max
     }
 
     // Callback to handle parameter updates
@@ -409,28 +567,52 @@ private:
 
         for (const auto &param : params) {
             if (param.get_name() == "minDisp") {
-                stereoParameters_.minDisparity = param.as_double();
+                double new_value =  param.as_double();
+                if (new_value < 0.0 || new_value > 768.0) {
+                    RCLCPP_WARN(this->get_logger(), "minDisp out of bounds, must be between 0 and 768. Clamping value.");
+                    new_value = std::clamp(new_value, 0.0, 768.0);
+                }
+                stereoParameters_.minDisparity = new_value;
                 RCLCPP_INFO(this->get_logger(), "minDisp updated: %f", stereoParameters_.minDisparity);
                 updateSGBMParams = true;
             }
             else if (param.get_name() == "SGBMP1") {
-                stereoParameters_.SGBMP1 = param.as_int();
+                int new_value = param.as_int();
+                if (new_value < 0 || new_value > 240) {
+                    RCLCPP_WARN(this->get_logger(), "SGBMP1 out of bounds, must be between 0 and 240. Clamping value.");
+                    new_value = std::clamp(new_value, 0, 240);
+                }
+                if (new_value >= stereoParameters_.SGBMP2){
+                    RCLCPP_WARN(this->get_logger(), "SGBMP1 must be less than SGBMP2. Clamping value.");
+                    new_value = stereoParameters_.SGBMP2 - 1;                    
+                }
+                stereoParameters_.SGBMP1 = new_value;
                 RCLCPP_INFO(this->get_logger(), "SGBMP1 updated: %d", stereoParameters_.SGBMP1);
                 updateSGBMParams = true;
             }
             else if (param.get_name() == "SGBMP2") {
-                stereoParameters_.SGBMP2 = param.as_int();
+                int new_value = param.as_int();
+                if (new_value < 0 || new_value > 240) {
+                    RCLCPP_WARN(this->get_logger(), "SGBMP2 out of bounds, must be between 1 and 240. Clamping value.");
+                    new_value = std::clamp(new_value, 1, 240);
+                }
+                if (new_value <= stereoParameters_.SGBMP1){
+                    RCLCPP_WARN(this->get_logger(), "SGBMP2 must be greater than SGBMP1. Clamping value.");
+                    new_value = stereoParameters_.SGBMP1 + 1;                    
+                }
+                stereoParameters_.SGBMP2 = new_value;
                 RCLCPP_INFO(this->get_logger(), "SGBMP2 updated: %d", stereoParameters_.SGBMP2);
                 updateSGBMParams = true;
             }
             else if (param.get_name() == "uniquenessRatio") {
-                stereoParameters_.uniquenessRatio = param.as_int();
+                int new_value = param.as_int();
+                if (new_value < 0 || new_value > 100) {
+                    RCLCPP_WARN(this->get_logger(), "Uniqueness ratio out of bounds, must be between 0 and 100. Clamping value.");
+                    new_value = std::clamp(new_value, 0, 100);
+                }
+                stereoParameters_.uniquenessRatio = new_value;
                 RCLCPP_INFO(this->get_logger(), "uniquenessRatio updated: %d", stereoParameters_.uniquenessRatio);
                 updateSGBMParams = true;
-            }
-            else if (param.get_name() == "pointCloudEnabled") {
-                stereoParameters_.doComputePointCloud = param.as_bool();
-                RCLCPP_INFO(this->get_logger(), "Point cloud transmission: %s", stereoParameters_.doComputePointCloud ? "enabled" : "disabled");
             }
             else if (param.get_name() == "postProcessDisparity") {
                 stereoParameters_.postProcessDisparity = param.as_bool();
@@ -469,6 +651,60 @@ private:
                 RCLCPP_INFO(this->get_logger(), "disparityTransmitEnabled updated: %s", stereoParameters_.streamTransmitFlags.disparityTransmitEnabled ? "enabled" : "disabled");
                 updatePublisher = true;
             }
+            else if (param.get_name() == "pointCloudEnabled") {
+                stereoParameters_.doComputePointCloud = param.as_bool();
+                RCLCPP_INFO(this->get_logger(), "Point cloud transmission: %s", stereoParameters_.doComputePointCloud ? "enabled" : "disabled");
+            }
+            else if (param.get_name() == "decimationFactor") {
+                int new_value = param.as_int();
+                if (new_value < 1) {
+                    RCLCPP_WARN(this->get_logger(), "decimationFactor must be greater than 1. Clamping value.");
+                    new_value = 1;
+                }
+                pointCloudParameters_.decimationFactor = new_value;
+                RCLCPP_INFO(this->get_logger(), "decimationFactor updated: %d", pointCloudParameters_.decimationFactor);
+            }
+            else if (param.get_name() == "XMin") {
+                pointCloudParameters_.ROIWorldCoordinatesXMin = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "XMin updated: %f", pointCloudParameters_.ROIWorldCoordinatesXMin);
+            }
+            else if (param.get_name() == "XMax") {
+                pointCloudParameters_.ROIWorldCoordinatesXMax = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "XMax updated: %f", pointCloudParameters_.ROIWorldCoordinatesXMax);
+            }
+            else if (param.get_name() == "YMin") {
+                pointCloudParameters_.ROIWorldCoordinatesYMin = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "YMin updated: %f", pointCloudParameters_.ROIWorldCoordinatesYMin);
+            }
+            else if (param.get_name() == "YMax") {
+                pointCloudParameters_.ROIWorldCoordinatesYMax = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "YMax updated: %f", pointCloudParameters_.ROIWorldCoordinatesYMax);
+            }
+            else if (param.get_name() == "ZMin") {
+                pointCloudParameters_.ROIWorldCoordinatesZMin = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "ZMin updated: %f", pointCloudParameters_.ROIWorldCoordinatesZMin);
+            }
+            else if (param.get_name() == "ZMax") {
+                pointCloudParameters_.ROIWorldCoordinatesZMax = param.as_double();
+                RCLCPP_INFO(this->get_logger(), "ZMax updated: %f", pointCloudParameters_.ROIWorldCoordinatesZMax);
+            }
+            else if (param.get_name() == "UMin") {
+                pointCloudParameters_.ROIImageCoordinatesUMin = param.as_int();
+                RCLCPP_INFO(this->get_logger(), "UMin updated: %d", pointCloudParameters_.ROIImageCoordinatesUMin);
+            }
+            else if (param.get_name() == "VMin") {
+                pointCloudParameters_.ROIImageCoordinatesVMin = param.as_int();
+                RCLCPP_INFO(this->get_logger(), "VMin updated: %d", pointCloudParameters_.ROIImageCoordinatesVMin);
+            }
+            else if (param.get_name() == "UMax") {
+                pointCloudParameters_.ROIImageCoordinatesUMax = param.as_int();
+                RCLCPP_INFO(this->get_logger(), "UMax updated: %d", pointCloudParameters_.ROIImageCoordinatesUMax);
+            }
+            else if (param.get_name() == "VMax") {
+                pointCloudParameters_.ROIImageCoordinatesVMax = param.as_int();
+                RCLCPP_INFO(this->get_logger(), "VMax updated: %d", pointCloudParameters_.ROIImageCoordinatesVMax);
+            }
+
         }
  
         if (updatePublisher)
@@ -585,9 +821,33 @@ int main(int argc, char** argv)
 
     PointCloudGenerator pointCloudGenerator(pCam);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+            
+    PointCloudParameters pointCloudParameters;
+    INodeMap& nodeMapCamera = pCam->GetNodeMap();
+    int64_t stereoHeight, stereoWidth;
+    if (!GetIntValueFromNode(nodeMapCamera, "StereoHeight", stereoHeight)){
+        stereoHeight = 1536;
+    }
+    if (!GetIntValueFromNode(nodeMapCamera, "StereoWidth", stereoWidth)){
+        stereoWidth = 2048;
+    }
+
+    pointCloudParameters.decimationFactor = 4;
+    pointCloudParameters.ROIImageCoordinatesUMin = 0;                   // U Min
+    pointCloudParameters.ROIImageCoordinatesVMin = 0;                   // V Min
+    pointCloudParameters.ROIImageCoordinatesUMax = (uint)stereoWidth;   // U Max
+    pointCloudParameters.ROIImageCoordinatesVMax = (uint)stereoHeight;  // V Max
+
+    // Region of Interest (ROI) in World Coordinates
+    pointCloudParameters.ROIWorldCoordinatesXMin = -10.0f;  // X Min
+    pointCloudParameters.ROIWorldCoordinatesXMax = 10.0f;   // X Max
+    pointCloudParameters.ROIWorldCoordinatesYMin = -10.0f;  // Y Min
+    pointCloudParameters.ROIWorldCoordinatesYMax = 10.0f;   // Y Max
+    pointCloudParameters.ROIWorldCoordinatesZMin = 0.0f;    // Z Min
+    pointCloudParameters.ROIWorldCoordinatesZMax = 20.0f;   // Z Max
 
     // Create the ROS2 node for publishing images
-    auto publisherNode = std::make_shared<StereoImagePublisherNode>(pCam, stereoParameters, imageMap, streamIndexMap);
+    auto publisherNode = std::make_shared<StereoImagePublisherNode>(pCam, stereoParameters, pointCloudParameters, imageMap, streamIndexMap);
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(publisherNode);
 
@@ -607,8 +867,6 @@ int main(int argc, char** argv)
 
             // converting Spinnaker image to OpenCV image
             cv::Mat disparityImage = cv::Mat(height, width, CV_16SC1, pData, stride);
-
-            cv::medianBlur(disparityImage, disparityImage, 5);
             
             cv::filterSpeckles(disparityImage,
                                 stereoParameters.invalidDisparityValue,
@@ -622,12 +880,22 @@ int main(int argc, char** argv)
             imageMap[CameraStreamType_DISPARITY] = postProcessedDisparityImage;
         }
 
-        if (stereoParameters.doComputePointCloud && imageMap[CameraStreamType_DISPARITY] != nullptr && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {    
+        if (stereoParameters.doComputePointCloud && stereoParameters.streamTransmitFlags.disparityTransmitEnabled && imageMap[CameraStreamType_DISPARITY] != nullptr) {    
             pointCloud->clear();
-            pointCloudGenerator.computePointCloud(imageMap[CameraStreamType_DISPARITY],
-                                                  imageMap[CameraStreamType_RECT_LEFT],
-                                                  stereoParameters, 
-                                                  pointCloud);
+            if (stereoParameters.streamTransmitFlags.rectLeftTransmitEnabled && imageMap[CameraStreamType_RECT_LEFT] != nullptr) {
+                pointCloudGenerator.computePointCloud(imageMap[CameraStreamType_DISPARITY],
+                                                    imageMap[CameraStreamType_RECT_LEFT],
+                                                    stereoParameters,
+                                                    pointCloudParameters,
+                                                    pointCloud);
+            }
+            else {
+                pointCloudGenerator.computePointCloud(imageMap[CameraStreamType_DISPARITY],
+                                                    stereoParameters,
+                                                    pointCloudParameters,
+                                                    pointCloud);
+            }
+
         }
 
         auto timestamp = publisherNode->now();
