@@ -142,58 +142,6 @@ public:
 
     }
 
-    // bool computePointCloud(const ImagePtr disparityImage,
-    //                         const ImagePtr refImage,
-    //                         StereoParameters stereoParameters,
-    //                         PointCloudParameters pointCloudParameters,
-    //                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
-    // {
-    //     cv::Mat disparityImageCV_uint16 = cv::Mat(disparityImage->GetHeight(),
-    //                                             disparityImage->GetWidth(),
-    //                                             CV_16UC1,
-    //                                             disparityImage->GetData(),
-    //                                             disparityImage->GetStride());
-                                                        
-    //     unsigned char* refImageData = static_cast<unsigned char*>(refImage->GetData());
-
-    //     pointCloud->points.reserve((disparityImageCV_uint16.rows / decimationFactor) * (disparityImageCV_uint16.cols / decimationFactor));
-
-    //     for (int i = 0; i < disparityImageCV_uint16.rows; i += decimationFactor) {
-    //         for (int j = 0; j < disparityImageCV_uint16.cols; j += decimationFactor) {
-    //             ushort disparityValue = disparityImageCV_uint16.at<ushort>(i, j);
-                
-    //             if (disparityValue == stereoParameters.invalidDisparityValue || disparityValue == 0) {
-    //                 continue;  // Skip invalid disparity
-    //             }
-
-    //             float disparity = disparityValue * stereoParameters.disparityScaleFactor + (float)stereoParameters.minDisparity;
-    //             if (disparity <= 0) {
-    //                 continue;  // Skip invalid or zero disparity
-    //             }
-
-    //             // Compute 3D point using the known Q matrix components
-    //             float Z = fFx * fBx / disparity;
-    //             float X = ((j - fCurrentCentreCol) * Z) / fFx;
-    //             float Y = ((i - fCurrentCentreRow) * Z) / fFx;
-
-    //             pcl::PointXYZRGB point;
-    //             point.x = X;
-    //             point.y = Y;
-    //             point.z = Z;
-
-    //             // Assign color from reference image
-    //             int pixel_idx = (i * disparityImageCV_uint16.cols + j) * 4;  
-    //             point.r = refImageData[pixel_idx + 2];
-    //             point.g = refImageData[pixel_idx + 1];
-    //             point.b = refImageData[pixel_idx];
-
-    //             pointCloud->push_back(point);
-    //         }
-    //     }
-
-    //     return true;
-    // }
-
     bool computePointCloud(const ImagePtr disparityImage,
                             const ImagePtr refImage,
                             StereoParameters stereoParameters,
@@ -248,7 +196,7 @@ public:
                 point.z = Z;
 
                 // Assign color from reference image
-                int pixel_idx = (i * disparityImageCV_uint16.cols + j) * 4;  
+                int pixel_idx = (i * disparityImageCV_uint16.cols + j) * 3;  
                 point.r = refImageData[pixel_idx + 2];
                 point.g = refImageData[pixel_idx + 1];
                 point.b = refImageData[pixel_idx];
