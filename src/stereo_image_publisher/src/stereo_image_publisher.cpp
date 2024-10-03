@@ -23,7 +23,7 @@ bool disablePacketResends(CameraPtr pCam)
         INodeMap& nodeMapTLStream = pCam->GetTLStreamNodeMap();
 
         // Get the packet resend enable node
-        CBooleanPtr ptrPacketResendEnable = nodeMapTLStream.GetNode("GevStreamPacketResendEnable");
+        CBooleanPtr ptrPacketResendEnable = nodeMapTLStream.GetNode("StreamPacketResendEnable");
 
         if (IsWritable(ptrPacketResendEnable))
         {

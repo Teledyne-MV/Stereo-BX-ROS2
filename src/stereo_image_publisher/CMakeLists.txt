@@ -12,12 +12,10 @@ find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(std_msgs REQUIRED)
 
-set(Spinnaker_PATH "/home/shubam/zone2/development/spinnaker/builds/dev/4.1.0.304_SDK-8995_2024-09-26_13-33-01/Linux/x64_jammy")
-
+# Adjust the path to your spinnaker installed location
+set(Spinnaker_PATH "${GENICAM_GENTL64_PATH}/../../")
 set(Spinnaker_INCLUDE_DIRS "${Spinnaker_PATH}/include")
 set(Spinnaker_LIBRARIES "${Spinnaker_PATH}/lib/libSpinnaker.so")
-
-
 
 # Include directories
 include_directories(
@@ -56,6 +54,12 @@ ament_target_dependencies(stereo_image_publisher
 install(TARGETS
   stereo_image_publisher
   DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install launch files
+install(
+  DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ament_package()
