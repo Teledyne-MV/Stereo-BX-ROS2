@@ -1,6 +1,6 @@
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
+
 #include <cv_bridge/cv_bridge.h>
+
 #include <opencv2/opencv.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <pcl/point_cloud.h>
@@ -197,9 +197,9 @@ public:
 
                 // Assign color from reference image
                 int pixel_idx = (i * disparityImageCV_uint16.cols + j) * 3;  
-                point.r = refImageData[pixel_idx + 2];
+                point.r = refImageData[pixel_idx];
                 point.g = refImageData[pixel_idx + 1];
-                point.b = refImageData[pixel_idx];
+                point.b = refImageData[pixel_idx + 2];
 
                 pointCloud->push_back(point);
             }
@@ -270,56 +270,6 @@ public:
         return true;
     }
 
-
-    bool computePointCloudOpenCV(const ImagePtr disparityImage, const ImagePtr refImage, StereoParameters stereoParameters, pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
-    {
-        cv::Mat disparityImageCV_uint16 = cv::Mat(disparityImage->GetHeight(),
-                                                    disparityImage->GetWidth(),
-                                                    CV_16UC1,
-                                                    disparityImage->GetData(),
-                                                    disparityImage->GetStride());
-                                                    
-        unsigned char* refImageData = static_cast<unsigned char*>(refImage->GetData());
-
-        cv::Mat disparityImageCV;
-        disparityImageCV_uint16.convertTo(disparityImageCV, CV_32F, stereoParameters.disparityScaleFactor);
-        disparityImageCV = disparityImageCV + (float)stereoParameters.minDisparity;
-
-        cv::Mat pointCloudImage;
-        cv::reprojectImageTo3D(disparityImageCV, pointCloudImage, Q);
-        
-        for (int i = 0; i < disparityImageCV.rows; i += decimationFactor) {
-            for (int j = 0; j < disparityImageCV.cols; j += decimationFactor) {
-                if(stereoParameters.doInvalidDisparityCheck && disparityImageCV_uint16.at<ushort>(i, j) == stereoParameters.invalidDisparityValue) {
-                    continue;
-                }
-
-                if(disparityImageCV.at<float>(i, j) < (float)stereoParameters.minDisparity || disparityImageCV.at<float>(i, j) > ((float)stereoParameters.minDisparity + 255.0)){
-                    continue;
-                }
-
-                if ((disparityImageCV.at<float>(i, j) != -1.0f) && (pointCloudImage.at<cv::Point3f>(i, j).z < 20.0)) {
-                    pcl::PointXYZRGB point;
-                    point.x = pointCloudImage.at<cv::Point3f>(i, j).x;
-                    point.y = pointCloudImage.at<cv::Point3f>(i, j).y;
-                    point.z = pointCloudImage.at<cv::Point3f>(i, j).z;
-                    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
-                        continue; // Skip this point if it's invalid
-                    }
-
-                    // Assign color from reference image
-                    int pixel_idx = (i * disparityImageCV.cols + j) * 4;  
-                    point.r = refImageData[pixel_idx + 2];
-                    point.g = refImageData[pixel_idx + 1];
-                    point.b = refImageData[pixel_idx];
-
-                    pointCloud->push_back(point);
-                }
-            }
-        }
-        
-        return true;
-    }
 
 };
 
