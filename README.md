@@ -65,13 +65,13 @@ rosdep update
 #### OpenCV
 ```bash
 sudo apt install libopencv-dev
-sudo apt-get install ros-<your-ros2-distro>-cv-bridge
+sudo apt-get install ros-humble-cv-bridge
 ```
 
 #### PCL (Point Cloud Library)
 ```bash
 sudo apt install libpcl-dev
-sudo apt-get install ros-<your-ros-distro>-pcl-ros
+sudo apt-get install ros-humble-pcl-ros
 ```
 
 #### Spinnaker SDK (for FLIR cameras)
