@@ -1,17 +1,5 @@
-#define ROLLING_TESTING
 
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
-
-#ifdef HUMBLE_RELEASE
 #include <cv_bridge/cv_bridge.h>
-#else // HUMBLE_RELEASE
-#endif // HUMBLE_RELEASE
-
-#ifdef ROLLING_TESTING
-#include <cv_bridge/cv_bridge.hpp>
-#else // ROLLING_TESTING
-#endif // ROLLING_TESTING
 
 #include <opencv2/opencv.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
