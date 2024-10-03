@@ -4,18 +4,23 @@
 This package provides a stereo image publisher for Spinnaker-based Bumblebee X stereo cameras, which captures stereo images, and computes disparity maps on board. The package allows users to publish the captured images and disparity in ROS2. Additionally, the package also demonstrates filtering the disparity image, and generating point cloud.
 
 ## Table of Contents
-- [System Requirements](#system-requirements)
-- [Installation Steps](#installation-steps)
-  - [1. Install ROS 2 Humble](#1-install-ros-2-humble)
-  - [2. Install Dependencies](#2-install-dependencies)
-  - [3. Clone the Repository](#3-clone-the-repository)
-  - [4. Build the Package](#4-build-the-package)
-- [Running the Application](#running-the-application)
-  - [1. Run the Node](#1-run-the-node)
-  - [2. Visualize in Rviz](#2-visualize-in-rviz)
-  - [3. Control Parameters with RQT](#3-control-parameters-with-rqt)
-- [Troubleshooting](#troubleshooting)
-- [Additional Resources](#additional-resources)
+- [stereo\_image\_publisher](#stereo_image_publisher)
+  - [Table of Contents](#table-of-contents)
+  - [System Requirements](#system-requirements)
+  - [Installation Steps](#installation-steps)
+    - [1. Install ROS 2 Humble](#1-install-ros-2-humble)
+    - [2. Install Dependencies](#2-install-dependencies)
+      - [OpenCV](#opencv)
+      - [PCL (Point Cloud Library)](#pcl-point-cloud-library)
+      - [Spinnaker SDK (for FLIR cameras)](#spinnaker-sdk-for-flir-cameras)
+    - [3. Clone the Repository](#3-clone-the-repository)
+    - [4. Build the Package](#4-build-the-package)
+  - [Running the Application](#running-the-application)
+    - [1. Run the Node](#1-run-the-node)
+    - [2. Visualize in Rviz](#2-visualize-in-rviz)
+    - [3. Control Parameters with RQT](#3-control-parameters-with-rqt)
+  - [Troubleshooting](#troubleshooting)
+  - [Additional Resources](#additional-resources)
 
 ---
 
@@ -119,7 +124,7 @@ ros2 run stereo_image_publisher stereo_image_publisher
 1. Open Rviz:
 
    ```bash
-   rviz2
+      ros2 launch stereo_image_publisher load_image_rviz2.launch.py
    ```
    ![rvis2](images/rviz_window.png)
 
