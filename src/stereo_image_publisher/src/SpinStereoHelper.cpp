@@ -1277,7 +1277,7 @@ namespace SpinStereo
             if (streamTransmitFlags.rawLeftTransmitEnabled)
             {
                 const int& streamIndex = streamIndexMap.at(CameraStreamType_RAW_LEFT);
-                imageMap[CameraStreamType_DISPARITY] = imageList.GetByIndex(streamIndex);
+                imageMap[CameraStreamType_RAW_LEFT] = imageList.GetByIndex(streamIndex);
             }
             if (streamTransmitFlags.rawRightTransmitEnabled)
             {
