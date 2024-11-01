@@ -2,10 +2,12 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>stereo_image_publisher</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="shubam@todo.todo">shubam</maintainer>
-  <license>TODO: License declaration</license>
+  <version>1.0.0</version>
+  <description>Publishes stereo images and disparity images from FLIR Bumblebee X stereo camera.</description>
+  <maintainer email="shubam.sachdeva@teledyne.com">shubam</maintainer>
+
+  <!-- FLIR Spinnaker SDK License. Refer to the FLIR_license.txt file in the package directory -->
+  <license>FLIR Spinnaker SDK License</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

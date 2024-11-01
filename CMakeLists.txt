@@ -3,6 +3,7 @@ project(stereo_image_publisher)
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(image_transport REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -13,7 +14,7 @@ find_package(pcl_ros REQUIRED)
 find_package(std_msgs REQUIRED)
 
 # Adjust the path to your spinnaker installed location
-set(Spinnaker_PATH "${GENICAM_GENTL64_PATH}/../../")
+set(Spinnaker_PATH "/opt/spinnaker")
 set(Spinnaker_INCLUDE_DIRS "${Spinnaker_PATH}/include")
 set(Spinnaker_LIBRARIES "${Spinnaker_PATH}/lib/libSpinnaker.so")
 
@@ -27,8 +28,8 @@ include_directories(
 # Add the executable with all the source files
 add_executable(stereo_image_publisher
   src/stereo_image_publisher.cpp
-  src/SpinStereoHelper.cpp
-  src/StereoParameters.cpp
+  src/spin_stereo_helper.cpp
+  src/stereo_parameters.cpp
 )
 
 # Link libraries
@@ -42,6 +43,7 @@ target_link_libraries(stereo_image_publisher
 
 ament_target_dependencies(stereo_image_publisher
   rclcpp
+  image_transport
   sensor_msgs
   cv_bridge
   OpenCV
@@ -54,12 +56,6 @@ ament_target_dependencies(stereo_image_publisher
 install(TARGETS
   stereo_image_publisher
   DESTINATION lib/${PROJECT_NAME}
-)
-
-# Install launch files
-install(
-  DIRECTORY launch/
-  DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ament_package()

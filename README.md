@@ -28,7 +28,8 @@ This package provides a stereo image publisher for Spinnaker-based Bumblebee X s
 - **OS**: Ubuntu 22.04 LTS
 - **ROS 2 Distribution**: Humble Hawksbill
 - **Compiler**: GCC 9 or newer
-- **Hardware**: FLIR cameras supported by the Spinnaker SDK
+- **Hardware**: BumbleBee X FLIR cameras
+- **Spinnaker SDK**: Spinnaker SDK v4.1.0.3xx or above
 
 ---
 
@@ -65,6 +66,38 @@ sudo rosdep init
 rosdep update
 ```
 
+### Optional: Configure ROS Sourcing
+
+To make the ROS environment available automatically in every new terminal, you can add the ROS source command to your `.bashrc` file.
+
+This step is optional but can be convenient.
+
+1. Open .bashrc with a text editor:
+```bash
+nano ~/.bashrc
+```
+
+2. Add the following line at the end of the file:
+```bash
+source /opt/ros/humble/setup.bash
+```
+
+3. Save the changes and close the editor.
+
+4. Reload .bashrc for the changes to take effect immediately:
+```bash
+source ~/.bashrc
+```
+
+#### Note: A reboot is generally not required for these changes to take effect, but reloading .bashrc as shown above ensures it’s set up without rebooting.
+
+If sourcing ROS is not added to `.bashrc`, ROS should be sourced manually on every new terminal with:
+
+```bash
+# source ROS environment
+source /opt/ros/humble/setup.bash
+```
+
 ### 2. Install Dependencies
 
 #### OpenCV
@@ -79,8 +112,10 @@ sudo apt install libpcl-dev
 sudo apt-get install ros-humble-pcl-ros
 ```
 
-#### Spinnaker SDK (for FLIR cameras)
+#### Spinnaker SDK (for Teledyne FLIR cameras)
 Download and install the Spinnaker SDK from FLIR's official website.
+
+#### Note: To use BumbleBee X stereo camera, Spinnaker v4.1.0.3xx or above is required.
 
 1. Download the SDK: [Spinnaker SDK Download](https://www.flir.com/products/spinnaker-sdk/)
 2. Follow the installation instructions provided with the SDK.
@@ -93,8 +128,7 @@ mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws/src
 
 # Clone the stereo_image_publisher repository
-# For now, ignore the github and load it from the zip file
-git clone https://github.com/TBD/stereo_image_publisher.git
+git clone https://github.com/Teledyne-MV/Stereo-BX-ROS2.git
 ```
 
 ### 4. Build the Package
@@ -103,6 +137,13 @@ git clone https://github.com/TBD/stereo_image_publisher.git
 cd ~/ros2_ws/
 colcon build --packages-select stereo_image_publisher
 source install/setup.bash
+```
+
+Note: If there have been any changes to the stereo publisher source files or Spinnaker version, you may want to clean and rebuild the publisher. The following package and commands can be used to clean the workspace. Rerun the build command above after cleaning the workspace.
+
+```bash
+sudo apt install python3-colcon-clean
+colcon clean workspace
 ```
 
 ---
@@ -119,52 +160,91 @@ source ~/ros2_ws/install/setup.bash
 ros2 run stereo_image_publisher stereo_image_publisher
 ```
 
+If there are multiple BumbleBee X cameras plugged into the system, the wrapper will select the first one it detects.
+To specify which BumbleBee X camera to use with the publisher, the serial number can be passed as an argument. 
+
+```bash
+# Source the workspace
+source ~/ros2_ws/install/setup.bash
+
+# Run the stereo image publisher node
+ros2 run stereo_image_publisher stereo_image_publisher <serial_number>
+```
+
 ### 2. Visualize in Rviz
 
-1. Open Rviz:
+1. Open a new terminal.
+
+2. Open Rviz using the following command:
 
    ```bash
-      ros2 launch stereo_image_publisher load_image_rviz2.launch.py
+      # Run RViz2 to visualize the published images and point cloud
+      rviz2
    ```
-   ![rvis2](images/rviz_window.png)
+   ![rviz2](images/rviz_window.png)
 
-2. Add the topics for image and point cloud:
-   - `/Bumblebee_X/raw_left_image`
-   - `/Bumblebee_X/disparity_image`
-   - `/Bumblebee_X/point_cloud`
+3. Add the topics for image and point cloud:
+   - `/Bumblebee_X/<serial_number>/raw_left_image`
+   - `/Bumblebee_X/<serial_number>/disparity_image`
+   - `/Bumblebee_X/<serial_number>/point_cloud`
 
-3. Pointcloud Fixed Frame.
-   change this to base_link
-
-   ![base_link](images/rviz_fixed_frame.png)
-
-
-4. Static Transform Pointcloud (Optional)
-   - if camera is upright and facing a target we treat the base as the floor for viewing purposes...
+4. Static Transform Pointcloud:
+   - If the camera is upright and facing a target, we treat the base as the floor for viewing purposes. The following commands will configure viewing of the pointcloud in RViz.
 
       ```bash
-      # -1.5708 rad = -90 degrees
-      # 1.5 meters
-      ros2 run tf2_ros static_transform_publisher 0 0 1.5 0 0 -1.5708 base_link camera_link  
+         # -1.5708 rad = -90 degrees
+         # 1.5 meters
+         ros2 run tf2_ros static_transform_publisher 0 0 1.5 0 0 -1.5708 base_link camera_link  
       ```
+
+5. Pointcloud Fixed Frame:
+   - Change this to base_link.
+   ![base_link](images/rviz_fixed_frame.png)
+
 ### 3. Control Parameters with RQT
 
-1. Run RQT to dynamically control the stereo image publisher parameters:
+1. Open a new terminal and run RQT to dynamically control the stereo image publisher parameters:
    
    ```bash
-   rqt
+      # Run RQT to read/write dynamic parameters.
+      rqt
    ```
 
-2. In RQT, go to the **Plugins** menu and select `Parameters`. You will see the adjustable parameters for the node.
+2. On the top, select Plugins > Configuration > Dynamic Reconfigure.
+
+3. In RQT on the lefthand side, there should be a selectable node called "stereo_image_publisher_<serial_number>". If not, make sure the stereo image publisher is running, and try refreshing the list.
+
+4. Select the "stereo_image_publisher_<serial_number>" node. Parameters for the publisher will populate on the righthand side and can be adjusted.
+
+#### Note: Increaing the frame rate might cause some unexpected behaviour in RViz like dropping image frames and point cloud from display. 
 
 ---
 
 ## Troubleshooting
 
 1. **Spinnaker SDK Initialization Issues:**
-   - Ensure the SDK is sourced correctly:
+   - Ensure the SPINNAKER_GENTL64_CTI environment variable is valid:
      ```bash
-     source /opt/spinnaker/bin/spinnaker-vars.sh
+     printenv | grep SPINNAKER_GENTL64_CTI
+     
+     # SPINNAKER_GENTL64_CTI should point to an existing /opt/spinnaker/lib/spinnaker-gentl/Spinnaker_GenTL.cti
+     ```
+
+   - Check that the camera is able to enumerate by running the Spinnaker Enumeration example:
+     ```bash
+     Enumeration # Located at /opt/spinnaker/bin/Enumeration, which should be in PATH environment variable provided Spinnaker was installed successfully.
+
+     # Looks like the following if camera is not enumerating:
+     # Application build date: Oct  2 2024 18:00:48
+
+     # Spinnaker library version: 4.1.0.309
+
+     # Number of interfaces detected: 3
+
+     # Number of cameras detected: 0
+
+     # Not enough cameras!
+     # Done! Press Enter to exit...
      ```
 
 2. **ROS2 Not Found:**
