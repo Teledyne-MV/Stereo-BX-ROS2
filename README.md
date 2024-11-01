@@ -135,7 +135,7 @@ git clone https://github.com/Teledyne-MV/Stereo-BX-ROS2.git
 
 ```bash
 cd ~/ros2_ws/
-colcon build --packages-select stereo_image_publisher
+colcon build --packages-select bumblebee_ros
 source install/setup.bash
 ```
 
@@ -157,7 +157,7 @@ colcon clean workspace
 source ~/ros2_ws/install/setup.bash
 
 # Run the stereo image publisher node
-ros2 run stereo_image_publisher stereo_image_publisher
+ros2 run bumblebee_ros stereo_image_publisher
 ```
 
 If there are multiple BumbleBee X cameras plugged into the system, the wrapper will select the first one it detects.
@@ -168,7 +168,7 @@ To specify which BumbleBee X camera to use with the publisher, the serial number
 source ~/ros2_ws/install/setup.bash
 
 # Run the stereo image publisher node
-ros2 run stereo_image_publisher stereo_image_publisher <serial_number>
+ros2 run bumblebee_ros stereo_image_publisher <serial_number>
 ```
 
 ### 2. Visualize in Rviz

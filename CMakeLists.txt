@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(stereo_image_publisher)
+project(bumblebee_ros)
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
