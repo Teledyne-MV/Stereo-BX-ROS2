@@ -22,16 +22,17 @@
 namespace SpinStereo {
 StereoParameters::StereoParameters() {
   // camera
+  serial_number = "";
   exposure_time = 20000;
   gain_value = 0.0;
   acquisition_frame_rate_enabled = true;
   frame_rate = 5.0;
   // post processing
   post_process_disparity = true;
-  max_speckle_size = 40;
+  max_speckle_size = 1000;
   max_diff = 4.0;
   // stream settings
-  stream_transmit_flags = {false, false, true, false, true};
+  stream_transmit_flags = {false, false, true, true, true};
   // stereo settings
   scan3d_coordinate_offset = 0.0;
   small_penalty = 5;
@@ -44,6 +45,7 @@ StereoParameters::StereoParameters() {
 std::string StereoParameters::ToString() const {
   std::stringstream strstr("");
 
+  strstr << "serial_number " << serial_number << std::endl;
   strstr << "exposure_time " << exposure_time << std::endl;
   strstr << "gain_value " << gain_value << std::endl;
   strstr << "frame_rate " << frame_rate << std::endl;

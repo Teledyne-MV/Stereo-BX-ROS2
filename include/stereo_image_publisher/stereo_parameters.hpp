@@ -38,8 +38,8 @@ struct StreamTransmitFlags {
                                         ///< image transmission.
   bool rect_sensor_2_transmit_enabled;  ///< Flag to enable rectified sensor2
                                         ///< image transmission.
-  bool disparity_transmit_enabled;  ///< Flag to enable disparity image
-                                    ///< transmission.
+  bool disparity_transmit_enabled;      ///< Flag to enable disparity image
+                                        ///< transmission.
 
   std::string ToString() const {
     std::stringstream strstr("");
@@ -92,6 +92,7 @@ class StereoParameters {
   int max_speckle_size;  ///< Speckle range value.
   double max_diff;       ///< Speckle threshold value.
 
+  std::string serial_number;
   bool auto_exposure;
   float exposure_time;  ///< Exposure time value.
   bool auto_gain;
