@@ -39,6 +39,7 @@ target_link_libraries(stereo_image_publisher
   ${PCL_LIBRARIES}
   ${pcl_conversions_LIBRARIES}
   ${pcl_ros_LIBRARIES}
+  ${sensors_msgs_LIBRARIES}
 )
 
 ament_target_dependencies(stereo_image_publisher

@@ -26,6 +26,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <opencv2/opencv.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 
 #include "ImageUtilityStereo.h"
 #include "PointCloud.h"
@@ -219,6 +220,36 @@ class PointCloudGenerator {
   }
 };
 
+sensor_msgs::msg::CameraInfo generateCameraInfo(
+    const StereoCameraParameters& stereo_params, int width, int height) {
+  sensor_msgs::msg::CameraInfo info;
+  info.width = width;
+  info.height = height;
+  info.distortion_model = "plumb_bob";
+  info.d = {0.0, 0.0, 0.0, 0.0, 0.0};  // assuming no distortion or rectified
+
+  info.k = {
+    stereo_params.focalLength, 0.0, stereo_params.principalPointU,
+    0.0, stereo_params.focalLength, stereo_params.principalPointV,
+    0.0, 0.0, 1.0
+  };
+
+  info.r = {
+    1.0, 0.0, 0.0,
+    0.0, 1.0, 0.0,
+    0.0, 0.0, 1.0
+  };
+
+  info.p = {
+    stereo_params.focalLength, 0.0, stereo_params.principalPointU, 0.0,
+    0.0, stereo_params.focalLength, stereo_params.principalPointV, 0.0,
+    0.0, 0.0, 1.0, 0.0
+  };
+
+  return info;
+}
+
+
 class StereoImagePublisherNode : public rclcpp::Node {
  public:
   StereoImagePublisherNode() : Node("stereo_image_publisher_node") {
@@ -319,6 +350,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rect_left_image_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       rect_right_image_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr
+      rect_left_camera_info_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr
+      rect_right_camera_info_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       disparity_image_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
@@ -952,6 +987,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/rectified_left_image",
               rclcpp::QoS(10).transient_local());
+      rect_left_camera_info_publisher_ =
+          this->create_publisher<sensor_msgs::msg::CameraInfo>(
+              "Bumblebee_X/" + serial_number + "/left_camera_info",
+              rclcpp::QoS(10).transient_local());
       RCLCPP_INFO(this->get_logger(),
                   "Rectified left image publisher created.");
     }
@@ -961,6 +1000,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rect_right_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/rectified_right_image",
+              rclcpp::QoS(10).transient_local());
+      rect_right_camera_info_publisher_ =
+          this->create_publisher<sensor_msgs::msg::CameraInfo>(
+              "Bumblebee_X/" + serial_number + "/right_camera_info",
               rclcpp::QoS(10).transient_local());
       RCLCPP_INFO(this->get_logger(),
                   "Rectified right image publisher created.");
@@ -1833,6 +1876,18 @@ class StereoImagePublisherNode : public rclcpp::Node {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
                             rect_left_image_publisher_, "rgb8", time_stamp);
+                                                     
+        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
+        int imageWidth = rect_left_img_ptr->GetWidth();
+        int imageHeight = rect_left_img_ptr->GetHeight();                            
+        sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
+                                                stereo_parameters_,
+                                                imageWidth,
+                                                imageHeight);
+        cam_info.header.stamp = time_stamp;
+        cam_info.header.frame_id = "camera_left_optical_frame";
+        rect_left_camera_info_publisher_->publish(cam_info);
+        
         if (save) {
           std::ostringstream filename;
           filename << "rectLeft_" << count << ".png";
@@ -1851,6 +1906,18 @@ class StereoImagePublisherNode : public rclcpp::Node {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2),
                             rect_right_image_publisher_, "rgb8", time_stamp);
+                                                     
+        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
+        int imageWidth = rect_left_img_ptr->GetWidth();
+        int imageHeight = rect_left_img_ptr->GetHeight();
+        sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
+                                                stereo_parameters_,
+                                                imageWidth,
+                                                imageHeight);
+        cam_info.header.stamp = time_stamp;
+        cam_info.header.frame_id = "camera_right_optical_frame";
+        rect_right_camera_info_publisher_->publish(cam_info);
+        
         if (save) {
           std::ostringstream filename;
           filename << "rectRight_" << count << ".png";
