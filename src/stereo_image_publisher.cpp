@@ -956,6 +956,8 @@ class StereoImagePublisherNode : public rclcpp::Node {
     rect_right_image_publisher_.reset();
     disparity_image_publisher_.reset();
     point_cloud_publisher_.reset();
+    rect_left_camera_info_publisher_.reset();
+    rect_right_camera_info_publisher_.reset();
 
     // Get the camera's serial number
     std::string serial_number =
@@ -1351,14 +1353,76 @@ class StereoImagePublisherNode : public rclcpp::Node {
     }
 
     if (updatePublisher) {
-      RCLCPP_INFO(this->get_logger(),
-                  "Reconfiguring publishers based on stream settings...");
+      RCLCPP_INFO(this->get_logger(), "Configuring streams");
       try {
-        // Reinitialize publishers
+        if (p_cam_->IsStreaming()) {
+          p_cam_->EndAcquisition();
+        }
+
+        // if all the streams are disabled, keep the acquisition off
+        bool at_least_one_enabled =
+            camera_parameters_.stream_transmit_flags
+                .raw_sensor_1_transmit_enabled ||
+            camera_parameters_.stream_transmit_flags
+                .raw_sensor_2_transmit_enabled ||
+            camera_parameters_.stream_transmit_flags
+                .rect_sensor_1_transmit_enabled ||
+            camera_parameters_.stream_transmit_flags
+                .rect_sensor_2_transmit_enabled ||
+            camera_parameters_.stream_transmit_flags.disparity_transmit_enabled;
+
+        if (at_least_one_enabled) {
+          // Set throughput to max
+          RCLCPP_DEBUG(
+              this->get_logger(),
+              "Trying to set DeviceLinkThroughputLimit to DeviceMaxThroughput");
+          if (!set_device_link_throughput_to_max(p_cam_)) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Unable to set DeviceLinkThroughputLimit to "
+                        "DeviceMaxThroughput");
+          }
+
+          // Reconfigure the camera streams
+          if (!SpinStereo::configure_camera_streams(
+                  p_cam_, camera_parameters_.stream_transmit_flags)) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Error during stream reconfiguration: %s",
+                         "Could not configure camera streams.");
+            result.successful = false;
+            return result;
+          }
+
+          // Set throughput to current
+          RCLCPP_DEBUG(this->get_logger(),
+                       "Trying to set DeviceLinkThroughputLimit to "
+                       "DeviceLinkCurrentThroughput");
+          if (!set_device_link_throughput_to_current(p_cam_)) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Unable to set DeviceLinkThroughputLimit to "
+                        "DeviceLinkCurrentThroughput. "
+                        "This might cause packet loss.");
+          }
+
+          // if more streams are enabled, the frame rate might change. Updating
+          // the resulting frame rate accordingly.
+          if (!get_frame_rate(p_cam_, camera_parameters_.frame_rate)) {
+            RCLCPP_DEBUG(this->get_logger(),
+                         "Could not read the updated frame rate. This might "
+                         "cause issues in timeout.");
+          }
+
+          if (!p_cam_->IsStreaming()) {
+            p_cam_->BeginAcquisition();
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "All streams have been disabled.");
+        }
+
         initialize_publishers();
+
       } catch (const Spinnaker::Exception& e) {
         RCLCPP_ERROR(this->get_logger(),
-                     "Exception during stream reconfiguration: %s", e.what());
+                     "Error during stream reconfiguration: %s", e.what());
         result.successful = false;
       }
     }
@@ -1872,12 +1936,14 @@ class StereoImagePublisherNode : public rclcpp::Node {
               .rect_sensor_1_transmit_enabled &&
           !image_list
                .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1)
-               ->IsIncomplete()) {
+               ->IsIncomplete() &&
+          rect_left_image_publisher_ &&
+          rect_left_camera_info_publisher_) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
                             rect_left_image_publisher_, "rgb8", time_stamp);
                                                      
-        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
+        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1);
         int imageWidth = rect_left_img_ptr->GetWidth();
         int imageHeight = rect_left_img_ptr->GetHeight();                            
         sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
@@ -1902,14 +1968,16 @@ class StereoImagePublisherNode : public rclcpp::Node {
               .rect_sensor_2_transmit_enabled &&
           !image_list
                .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2)
-               ->IsIncomplete()) {
+               ->IsIncomplete() &&
+          rect_right_image_publisher_ &&
+          rect_right_camera_info_publisher_) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2),
                             rect_right_image_publisher_, "rgb8", time_stamp);
                                                      
-        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
-        int imageWidth = rect_left_img_ptr->GetWidth();
-        int imageHeight = rect_left_img_ptr->GetHeight();
+        auto rect_right_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
+        int imageWidth = rect_right_img_ptr->GetWidth();
+        int imageHeight = rect_right_img_ptr->GetHeight();
         sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
                                                 stereo_parameters_,
                                                 imageWidth,
