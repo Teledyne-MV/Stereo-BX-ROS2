@@ -429,6 +429,207 @@ bool get_frame_rate(CameraPtr p_cam, float &resulting_frame_rate) {
   }
 }
 
+bool set_pixel_format(CameraPtr p_cam, const std::string &format_name) {
+  try {
+    INodeMap &node_map = p_cam->GetNodeMap();
+
+    // Select Sensor1 / Rectified stream
+    CEnumerationPtr ptr_source_selector = node_map.GetNode("SourceSelector");
+    CEnumerationPtr ptr_component_selector = node_map.GetNode("ComponentSelector");
+    CEnumEntryPtr ptr_source_sensor_1 = ptr_source_selector->GetEntryByName("Sensor1");
+    CEnumEntryPtr ptr_component_rectified = ptr_component_selector->GetEntryByName("Rectified");
+
+    ptr_source_selector->SetIntValue(ptr_source_sensor_1->GetValue());
+    ptr_component_selector->SetIntValue(ptr_component_rectified->GetValue());
+
+    // Stop acquisition
+    bool was_streaming = false;
+    if (p_cam->IsStreaming()) {
+      was_streaming = true;
+      p_cam->EndAcquisition();
+      RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                   "Acquisition stopped before pixel format change.");
+    }
+
+    // Set pixel format
+    CEnumerationPtr ptr_pixel_format = node_map.GetNode("PixelFormat");
+    if (!IsWritable(ptr_pixel_format)) {
+      RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                   "PixelFormat node is not writable.");
+      return false;
+    }
+
+    CEnumEntryPtr entry = ptr_pixel_format->GetEntryByName(format_name.c_str());
+    if (!entry || !IsAvailable(entry) || !IsReadable(entry)) {
+      CEnumEntryPtr current_entry = ptr_pixel_format->GetCurrentEntry();
+      std::string current_format = current_entry && IsReadable(current_entry)
+                                  ? std::string(current_entry->GetSymbolic().c_str())
+                                  : "unknown";
+
+      RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                  "Invalid pixel format '%s'. Camera will fallback to '%s'.",
+                  format_name.c_str(), current_format.c_str());
+
+      // Restart acquisition if needed
+      if (was_streaming) {
+        p_cam->BeginAcquisition();
+        RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                    "Acquisition restarted with original format.");
+      }
+
+      return false;
+    }
+
+    ptr_pixel_format->SetIntValue(entry->GetValue());
+    RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                "Pixel format set to: %s", format_name.c_str());
+
+    set_device_link_throughput_to_max(p_cam);
+    set_device_link_throughput_to_current(p_cam);
+
+    // Restart acquisition
+    p_cam->BeginAcquisition();
+    RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                 "Acquisition restarted after pixel format change.");
+
+    return true;
+
+  } catch (const Spinnaker::Exception &e) {
+    RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                 "Error setting pixel format: %s", e.what());
+    return false;
+  }
+}
+
+bool get_pixel_format(CameraPtr p_cam, std::string &format_name_out) {
+  try {
+    INodeMap &node_map = p_cam->GetNodeMap();
+
+    // Select Sensor1 / Rectified stream
+    CEnumerationPtr ptr_source_selector = node_map.GetNode("SourceSelector");
+    CEnumerationPtr ptr_component_selector = node_map.GetNode("ComponentSelector");
+    CEnumEntryPtr ptr_source_sensor_1 = ptr_source_selector->GetEntryByName("Sensor1");
+    CEnumEntryPtr ptr_component_rectified = ptr_component_selector->GetEntryByName("Rectified");
+
+    ptr_source_selector->SetIntValue(ptr_source_sensor_1->GetValue());
+    ptr_component_selector->SetIntValue(ptr_component_rectified->GetValue());
+
+    CEnumerationPtr ptr_pixel_format = node_map.GetNode("PixelFormat");
+    if (!IsReadable(ptr_pixel_format)) {
+      RCLCPP_WARN(rclcpp::get_logger("stereo_image_publisher"),
+                  "PixelFormat node is not readable.");
+      return false;
+    }
+
+    CEnumEntryPtr entry = ptr_pixel_format->GetCurrentEntry();
+    if (!entry || !IsReadable(entry)) {
+      RCLCPP_WARN(rclcpp::get_logger("stereo_image_publisher"),
+                  "Current PixelFormat entry is not readable.");
+      return false;
+    }
+
+    format_name_out = entry->GetSymbolic();
+    return true;
+
+  } catch (const Spinnaker::Exception &e) {
+    RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                 "Error reading pixel format: %s", e.what());
+    return false;
+  }
+}
+
+bool set_stereo_resolution(CameraPtr p_cam, const std::string &resolution_name) {
+  try {
+    INodeMap &node_map = p_cam->GetNodeMap();
+
+    // Stop acquisition if running
+    bool was_streaming = false;
+    if (p_cam->IsStreaming()) {
+      was_streaming = true;
+      p_cam->EndAcquisition();
+      RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                   "Acquisition stopped before resolution change.");
+    }
+
+    // Look up the StereoResolution enum
+    CEnumerationPtr ptr_res = node_map.GetNode("StereoResolution");
+    if (!IsWritable(ptr_res)) {
+      RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                   "StereoResolution node is not writable.");
+      return false;
+    }
+
+    // Find the requested entry
+    CEnumEntryPtr entry = ptr_res->GetEntryByName(resolution_name.c_str());
+    if (!entry || !IsAvailable(entry) || !IsReadable(entry)) {
+      // fallback to whatever's currently set
+      CEnumEntryPtr cur = ptr_res->GetCurrentEntry();
+      std::string cur_name = (cur && IsReadable(cur))
+                             ? cur->GetSymbolic().c_str()
+                             : "unknown";
+      RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                  "Invalid resolution '%s'; camera stays at '%s'.",
+                  resolution_name.c_str(), cur_name.c_str());
+      if (was_streaming) {
+        p_cam->BeginAcquisition();
+        RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                     "Acquisition restarted with original resolution.");
+      }
+      return false;
+    }
+
+    // Apply it
+    ptr_res->SetIntValue(entry->GetValue());
+    RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                "StereoResolution set to: %s", resolution_name.c_str());
+
+    set_device_link_throughput_to_max(p_cam);
+    set_device_link_throughput_to_current(p_cam);
+
+    // Restart acquisition
+    p_cam->BeginAcquisition();
+    RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
+                 "Acquisition restarted after resolution change.");
+
+    return true;
+
+  } catch (const Spinnaker::Exception &e) {
+    RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                 "Error setting StereoResolution: %s", e.what());
+    return false;
+  }
+}
+
+bool get_stereo_resolution(CameraPtr p_cam, std::string &resolution_out) {
+  try {
+    INodeMap &node_map = p_cam->GetNodeMap();
+
+    // Read the StereoResolution enum
+    CEnumerationPtr ptr_res = node_map.GetNode("StereoResolution");
+    if (!IsReadable(ptr_res)) {
+      RCLCPP_WARN(rclcpp::get_logger("stereo_image_publisher"),
+                  "StereoResolution node is not readable.");
+      return false;
+    }
+
+    CEnumEntryPtr cur = ptr_res->GetCurrentEntry();
+    if (!cur || !IsReadable(cur)) {
+      RCLCPP_WARN(rclcpp::get_logger("stereo_image_publisher"),
+                  "Current StereoResolution entry is not readable.");
+      return false;
+    }
+
+    resolution_out = cur->GetSymbolic().c_str();
+    return true;
+
+  } catch (const Spinnaker::Exception &e) {
+    RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
+                 "Error reading StereoResolution: %s", e.what());
+    return false;
+  }
+}
+
+
 bool set_acquisition_mode(INodeMap &node_map) {
   CEnumerationPtr ptr_acquisition_mode = node_map.GetNode("AcquisitionMode");
   if (!IsReadable(ptr_acquisition_mode) || !IsWritable(ptr_acquisition_mode)) {
@@ -468,7 +669,7 @@ bool set_stream_buffer_handling_mode(INodeMap &node_map_TL_device) {
   }
 
   CEnumEntryPtr ptr_handling_mode_entry =
-      ptr_handling_mode->GetEntryByName("OldestFirst");
+      ptr_handling_mode->GetEntryByName("NewestOnly");
   if (!IsReadable(ptr_handling_mode_entry)) {
     RCLCPP_ERROR(rclcpp::get_logger("stereo_image_publisher"),
                  "Unable to read ptr_handling_mode_entry node. Aborting...");
@@ -479,7 +680,7 @@ bool set_stream_buffer_handling_mode(INodeMap &node_map_TL_device) {
   ptr_handling_mode->SetIntValue(ptr_handling_mode_entry_val);
 
   RCLCPP_DEBUG(rclcpp::get_logger("stereo_image_publisher"),
-               "StreamBufferHandlingMode set to OldestFirst.");
+               "StreamBufferHandlingMode set to NewestOnly.");
 
   return true;
 }

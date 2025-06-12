@@ -27,6 +27,8 @@ StereoParameters::StereoParameters() {
   gain_value = 0.0;
   acquisition_frame_rate_enabled = true;
   frame_rate = 5.0;
+  pixel_format = "";
+  resolution = "Full";
   // post processing
   post_process_disparity = true;
   max_speckle_size = 1000;

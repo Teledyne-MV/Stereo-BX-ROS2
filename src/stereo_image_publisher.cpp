@@ -71,150 +71,32 @@ class PointCloudGenerator {
   }
 
   bool compute_point_cloud(const ImagePtr& disparity_image,
-                           const ImagePtr& reference_image, float min_disparity,
-                           const StereoCameraParameters& stereo_parameters_,
-                           const PointCloudParameters& point_cloud_parameters_,
-                           pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud) {
-    cv::Mat disparity_image_CV_uint16 = cv::Mat(
-        disparity_image->GetHeight(), disparity_image->GetWidth(), CV_16UC1,
-        disparity_image->GetData(), disparity_image->GetStride());
+                           const ImagePtr& reference_image,
+                           const StereoCameraParameters& stereo_parameters,
+                           const PointCloudParameters& point_cloud_parameters,
+                           pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud)
+  {
+    auto spin_pc = ImageUtilityStereo::ComputePointCloud(
+                    disparity_image,
+                    reference_image,
+                    point_cloud_parameters,
+                    stereo_parameters);
 
-    unsigned char* reference_image_data =
-        static_cast<unsigned char*>(reference_image->GetData());
+    // Convert to PCL
+    point_cloud->clear();
+    const size_t N = spin_pc.GetNumPoints();
+    point_cloud->points.reserve(N);
 
-    point_cloud->points.reserve((disparity_image_CV_uint16.rows /
-                                 point_cloud_parameters_.decimationFactor) *
-                                (disparity_image_CV_uint16.cols /
-                                 point_cloud_parameters_.decimationFactor));
-
-    for (int i = point_cloud_parameters_.ROIImageTop;
-         i < std::min(disparity_image_CV_uint16.rows,
-                      (int)point_cloud_parameters_.ROIImageBottom);
-         i += point_cloud_parameters_.decimationFactor) {
-      for (int j = point_cloud_parameters_.ROIImageLeft;
-           j < std::min(disparity_image_CV_uint16.cols,
-                        (int)point_cloud_parameters_.ROIImageRight);
-           j += point_cloud_parameters_.decimationFactor) {
-        ushort disparity_value = disparity_image_CV_uint16.at<ushort>(i, j);
-
-        if (stereo_parameters_.invalidDataFlag &&
-            disparity_value == stereo_parameters_.invalidDataValue) {
-          continue;  // Skip invalid disparity
-        }
-
-        float disparity =
-            disparity_value * stereo_parameters_.disparityScaleFactor +
-            min_disparity;
-        if (disparity <= 0) {
-          continue;  // Skip invalid or zero disparity
-        }
-
-        // Compute the 3D point (Z = focal_length * baseline / disparity;
-        // X = (col - principalPointU) * Z / focal_length;
-        // Y = (row - principalPointV) * Z / focal_length)
-        float Z = stereo_parameters_.focalLength * stereo_parameters_.baseline /
-                  disparity;
-        float X = ((j - stereo_parameters_.principalPointU) * Z) /
-                  stereo_parameters_.focalLength;
-        float Y = ((i - stereo_parameters_.principalPointV) * Z) /
-                  stereo_parameters_.focalLength;
-
-        // Skip points outside the world coordinate bounds
-        if (X < point_cloud_parameters_.ROIWorldCoordinatesXMin ||
-            X > point_cloud_parameters_.ROIWorldCoordinatesXMax ||
-            Y < point_cloud_parameters_.ROIWorldCoordinatesYMin ||
-            Y > point_cloud_parameters_.ROIWorldCoordinatesYMax ||
-            Z < point_cloud_parameters_.ROIWorldCoordinatesZMin ||
-            Z > point_cloud_parameters_.ROIWorldCoordinatesZMax) {
-          continue;  // Skip points outside of specified world bounds
-        }
-
-        pcl::PointXYZRGB point;
-        point.x = X;
-        point.y = Y;
-        point.z = Z;
-
-        // Assign color from reference image
-        int pixel_idx = (i * disparity_image_CV_uint16.cols + j) * 3;
-        point.r = reference_image_data[pixel_idx];
-        point.g = reference_image_data[pixel_idx + 1];
-        point.b = reference_image_data[pixel_idx + 2];
-
-        point_cloud->push_back(point);
-      }
-    }
-    return true;
-  }
-
-  bool compute_point_cloud(const ImagePtr& disparity_image, float min_disparity,
-                           const StereoCameraParameters& stereo_parameters_,
-                           const PointCloudParameters& point_cloud_parameters_,
-                           pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud) {
-    cv::Mat disparity_image_CV_uint16 = cv::Mat(
-        disparity_image->GetHeight(), disparity_image->GetWidth(), CV_16UC1,
-        disparity_image->GetData(), disparity_image->GetStride());
-
-    point_cloud->points.reserve((disparity_image_CV_uint16.rows /
-                                 point_cloud_parameters_.decimationFactor) *
-                                (disparity_image_CV_uint16.cols /
-                                 point_cloud_parameters_.decimationFactor));
-
-    for (int i = point_cloud_parameters_.ROIImageTop;
-         i < std::min(disparity_image_CV_uint16.rows,
-                      (int)point_cloud_parameters_.ROIImageBottom);
-         i += point_cloud_parameters_.decimationFactor) {
-      for (int j = point_cloud_parameters_.ROIImageLeft;
-           j < std::min(disparity_image_CV_uint16.cols,
-                        (int)point_cloud_parameters_.ROIImageRight);
-           j += point_cloud_parameters_.decimationFactor) {
-        ushort disparity_value = disparity_image_CV_uint16.at<ushort>(i, j);
-
-        if (stereo_parameters_.invalidDataFlag &&
-            disparity_value == stereo_parameters_.invalidDataValue) {
-          continue;  // Skip invalid disparity
-        }
-
-        float disparity =
-            disparity_value * stereo_parameters_.disparityScaleFactor +
-            min_disparity;
-        if (disparity <= 0) {
-          continue;  // Skip invalid or zero disparity
-        }
-
-        // Compute the 3D point (Z = focal_length * baseline / disparity;
-        // X = (col - principalPointU) * Z / focal_length;
-        // Y = (row - principalPointV) * Z / focal_length)
-        float Z = stereo_parameters_.focalLength * stereo_parameters_.baseline /
-                  disparity;
-        float X = ((j - stereo_parameters_.principalPointU) * Z) /
-                  stereo_parameters_.focalLength;
-        float Y = ((i - stereo_parameters_.principalPointV) * Z) /
-                  stereo_parameters_.focalLength;
-
-        // Skip points outside the world coordinate bounds
-        if (X < point_cloud_parameters_.ROIWorldCoordinatesXMin ||
-            X > point_cloud_parameters_.ROIWorldCoordinatesXMax ||
-            Y < point_cloud_parameters_.ROIWorldCoordinatesYMin ||
-            Y > point_cloud_parameters_.ROIWorldCoordinatesYMax ||
-            Z < point_cloud_parameters_.ROIWorldCoordinatesZMin ||
-            Z > point_cloud_parameters_.ROIWorldCoordinatesZMax) {
-          continue;  // Skip points outside of specified world bounds
-        }
-
-        pcl::PointXYZRGB point;
-        point.x = X;
-        point.y = Y;
-        point.z = Z;
-
-        point.r = (uint8_t)(disparity_value *
-                            stereo_parameters_.disparityScaleFactor);
-        point.g = (uint8_t)(disparity_value *
-                            stereo_parameters_.disparityScaleFactor);
-        point.b = (uint8_t)(disparity_value *
-                            stereo_parameters_.disparityScaleFactor);
-
-        point_cloud->push_back(point);
-      }
+    for (size_t i = 0; i < N; ++i) {
+      auto pt = spin_pc.GetPoint(i);
+      pcl::PointXYZRGB p;
+      p.x = pt.x;
+      p.y = pt.y;
+      p.z = pt.z;
+      p.r = pt.r;
+      p.g = pt.g;
+      p.b = pt.b;
+      point_cloud->points.push_back(p);
     }
     return true;
   }
@@ -252,8 +134,8 @@ sensor_msgs::msg::CameraInfo generateCameraInfo(
 
 class StereoImagePublisherNode : public rclcpp::Node {
  public:
-  StereoImagePublisherNode() : Node("stereo_image_publisher_node") {
-    
+  StereoImagePublisherNode(const rclcpp::NodeOptions & options) : Node("stereo_image_publisher_node") {
+
     declare_serial_number_parameter();
 
     system = System::GetInstance();
@@ -265,6 +147,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rclcpp::shutdown();
       return;
     }
+
+    configure_pixel_format();
+
+    configure_resolution();
 
     // Declare parameters with constraints based on camera's capabilities
     declare_parameters();
@@ -377,6 +263,21 @@ class StereoImagePublisherNode : public rclcpp::Node {
   // Stereo parameters
   StereoCameraParameters stereo_parameters_;
 
+  // The GenApi enumeration node for PixelFormat:
+  GenApi::CEnumerationPtr pixel_format_enum_;
+
+  // The list of symbolic names, e.g. {"RGB8","Mono8", …}
+  std::vector<std::string> pixel_format_options_;
+
+  // A reusable description builder (optional)
+  std::ostringstream pixel_format_desc_;
+
+  bool do_update_pixel_format_{false};
+
+  std::vector<std::string> resolution_options_;  
+  std::ostringstream resolution_desc_;  
+  bool do_update_resolution_{false};
+
   // Point cloud generator
   PointCloudGenerator point_cloud_generator;
 
@@ -399,13 +300,6 @@ class StereoImagePublisherNode : public rclcpp::Node {
         RCLCPP_ERROR(this->get_logger(), "No cameras detected.");
         return false;
       }
-
-      // // Declare the parameter with a default value
-      // this->declare_parameter<std::string>("camera.serial_number", "");
-
-      // // Retrieve the parameter value
-      // this->get_parameter("camera.serial_number",
-      //                     camera_parameters_.serial_number);
 
       if (camera_parameters_.serial_number != "") {
         // Log the retrieved serial number
@@ -466,7 +360,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
         }
 
         camera_parameters_.serial_number = serial_number_;
-
+        this->set_parameter(rclcpp::Parameter("camera.serial_number", serial_number_));
+        RCLCPP_INFO(this->get_logger(),
+                          "Camera Serial Number: %s",
+                          camera_parameters_.serial_number.c_str());
         // If no matching camera was found, release resources and return an
         // error
         if (!p_cam_) {
@@ -527,7 +424,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     }
 
     RCLCPP_DEBUG(this->get_logger(), "Configuring device link throughput...");
-    if (!set_device_link_throughput(p_cam_)) {
+    if (!set_device_link_throughput_to_max(p_cam_)) {
       RCLCPP_WARN(this->get_logger(), "Unable to set device link throughput.");
     }
 
@@ -544,19 +441,142 @@ class StereoImagePublisherNode : public rclcpp::Node {
       }
     }
 
+    RCLCPP_DEBUG(this->get_logger(), "Setting pixel format...");
+    if (camera_parameters_.pixel_format == "") {
+      get_pixel_format(p_cam_, camera_parameters_.pixel_format);
+    } else {
+      if (!set_pixel_format(p_cam_, camera_parameters_.pixel_format)) {
+        RCLCPP_WARN(this->get_logger(), "Unable to set pixel format to %s.",
+                    camera_parameters_.pixel_format.c_str());
+      } else {
+        if (!get_pixel_format(p_cam_, camera_parameters_.pixel_format)) {
+          RCLCPP_WARN(this->get_logger(),
+                      "Unable to get acquisition frame rate.");
+        } else {
+          RCLCPP_DEBUG(this->get_logger(), "pixel_format updated: %s",
+                      camera_parameters_.pixel_format.c_str());
+        }
+      }
+    }
+
+    RCLCPP_DEBUG(this->get_logger(), "Configuring device link throughput...");
+    if (!set_device_link_throughput_to_current(p_cam_)) {
+      RCLCPP_WARN(this->get_logger(), "Unable to set device link throughput.");
+    }
+
     return true;
   }
+
+  void configure_pixel_format()
+  {
+    CEnumerationPtr ptr_source_selector = node_map_->GetNode("SourceSelector");
+    CEnumerationPtr ptr_component_selector =
+        node_map_->GetNode("ComponentSelector");
+        
+    GenApi::CEnumEntryPtr ptr_source_sensor_1 =
+        ptr_source_selector->GetEntryByName("Sensor1");
+    GenApi::CEnumEntryPtr ptr_component_rectified =
+        ptr_component_selector->GetEntryByName("Rectified");
+
+    // Raw Sensor1
+    ptr_source_selector->SetIntValue(ptr_source_sensor_1->GetValue());
+    ptr_component_selector->SetIntValue(ptr_component_rectified->GetValue());
+    
+        // 1) Grab the generic node pointer…
+    GenApi::INode* node =
+      node_map_->GetNode("PixelFormat");
+    // …and cast it to an IEnumeration
+    pixel_format_enum_ =
+      static_cast<GenApi::CEnumerationPtr>(node);
+
+    // 2) Check availability/read-access
+    if (!GenApi::IsAvailable(pixel_format_enum_) ||
+        !GenApi::IsReadable (pixel_format_enum_))
+    {
+      RCLCPP_WARN(get_logger(),
+                  "PixelFormat not available/readable");
+      return;
+    }
+
+    // 3) Iterate its entries
+    pixel_format_options_.clear();
+    GenApi::NodeList_t entries;
+    pixel_format_enum_->GetEntries(entries);
+
+    for (auto &n : entries)
+    {
+      auto e = static_cast<GenApi::CEnumEntryPtr>(n);
+      if (!GenApi::IsAvailable(e) || !GenApi::IsReadable(e))
+        continue;
+
+      // Convert gcstring → std::string
+      pixel_format_options_.push_back(std::string(e->GetSymbolic().c_str()));
+    }
+
+    // 4) Build your human-readable description
+    pixel_format_desc_.str("");
+    pixel_format_desc_.clear();
+    pixel_format_desc_ << "Choose pixel_format from: ";
+    for (size_t i = 0; i < pixel_format_options_.size(); ++i)
+    {
+      pixel_format_desc_ << pixel_format_options_[i]
+                        << (i+1 < pixel_format_options_.size() ? ", " : "");
+    }
+
+    RCLCPP_INFO(get_logger(),
+                "Supported PixelFormats: %s",
+                pixel_format_desc_.str().c_str());
+  }
+
+  void configure_resolution()
+  {
+    // 1) Grab the GenICam enumeration node
+    GenApi::INode* node = node_map_->GetNode("StereoResolution");
+    auto resolution_enum = static_cast<GenApi::CEnumerationPtr>(node);
+
+    // 2) Check availability/read‐access
+    if (!GenApi::IsAvailable(resolution_enum) || !GenApi::IsReadable(resolution_enum))
+    {
+      RCLCPP_WARN(get_logger(), "StereoResolution not available/readable");
+      return;
+    }
+
+    // 3) Iterate its symbolic entries
+    resolution_options_.clear();
+    GenApi::NodeList_t entries;
+    resolution_enum->GetEntries(entries);
+
+    for (auto &n : entries)
+    {
+      auto e = static_cast<GenApi::CEnumEntryPtr>(n);
+      if (!GenApi::IsAvailable(e) || !GenApi::IsReadable(e))
+        continue;
+      resolution_options_.push_back(std::string(e->GetSymbolic().c_str()));
+    }
+
+    // 4) Build the human‐readable description
+    resolution_desc_.str("");
+    resolution_desc_.clear();
+    resolution_desc_ << "Choose StereoResolution from: ";
+    for (size_t i = 0; i < resolution_options_.size(); ++i)
+    {
+      resolution_desc_ << resolution_options_[i]
+                      << (i + 1 < resolution_options_.size() ? ", " : "");
+    }
+
+    // 5) Log it so RQT’s declare_parameters() can use it
+    RCLCPP_INFO(get_logger(),
+                "Supported StereoResolutions: %s",
+                resolution_desc_.str().c_str());
+  }
+
+
   void declare_serial_number_parameter() {
     // Declare the serial_number parameter with a default empty string
     this->declare_parameter<std::string>("camera.serial_number", "");
 
     // Retrieve the serial_number parameter value
     this->get_parameter("camera.serial_number", camera_parameters_.serial_number);
-
-    // Log the retrieved serial number
-    RCLCPP_INFO(this->get_logger(),
-                "Camera Serial Number: %s",
-                camera_parameters_.serial_number.c_str());
   }
 
 
@@ -669,7 +689,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
     // Set up a read-only parameter descriptor
     rcl_interfaces::msg::ParameterDescriptor read_only_descriptor;
-    read_only_descriptor.read_only = true;
+    // read_only_descriptor.read_only = true;
 
     // Declare the parameters as read-only
     this->declare_parameter<double>("stereo.principal_point_u",
@@ -814,10 +834,18 @@ class StereoImagePublisherNode : public rclcpp::Node {
         "point_cloud.ZMax", point_cloud_parameters_.ROIWorldCoordinatesZMax,
         ZMaxDesc);
 
+    int64_t stereo_height_max, stereo_width_max;
+    if (!get_int_value_from_node(*node_map_, "HeightMax", stereo_height_max)) {
+      stereo_height_max = 1536;
+    }
+    if (!get_int_value_from_node(*node_map_, "WidthMax", stereo_width_max)) {
+      stereo_width_max = 2048;
+    }
+
     // point_cloud.ROI_image_left
     rcl_interfaces::msg::ParameterDescriptor ROILeftDesc;
     int minROIImageLeft = 0;
-    int maxROIImageLeft = 2048;  // Assuming image width
+    int maxROIImageLeft = stereo_width_max;
     ROILeftDesc.description = "Left boundary of ROI image, clamped between " +
                               std::to_string(minROIImageLeft) + " and " +
                               std::to_string(maxROIImageLeft);
@@ -831,7 +859,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     // point_cloud.ROI_image_top
     rcl_interfaces::msg::ParameterDescriptor ROITopDesc;
     int minROITop = 0;
-    int maxROITop = 1536;  // Assuming image height
+    int maxROITop = stereo_height_max;
     ROITopDesc.description = "Top boundary of ROI image, clamped between " +
                              std::to_string(minROITop) + " and " +
                              std::to_string(maxROITop);
@@ -845,7 +873,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     // point_cloud.ROI_image_right
     rcl_interfaces::msg::ParameterDescriptor ROIRightDesc;
     int minROIRight = 0;
-    int maxROIRight = 2048;  // Assuming image width
+    int maxROIRight = stereo_width_max;
     ROIRightDesc.description = "Right boundary of ROI image, clamped between " +
                                std::to_string(minROIRight) + " and " +
                                std::to_string(maxROIRight);
@@ -860,7 +888,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     // point_cloud.ROI_image_bottom
     rcl_interfaces::msg::ParameterDescriptor ROIBottomDesc;
     int minROIBottom = 0;
-    int maxROIBottom = 1536;  // Assuming image height
+    int maxROIBottom = stereo_height_max;
     ROIBottomDesc.description =
         "Bottom boundary of ROI image, clamped between " +
         std::to_string(minROIBottom) + " and " + std::to_string(maxROIBottom);
@@ -945,6 +973,41 @@ class StereoImagePublisherNode : public rclcpp::Node {
         camera_parameters_.acquisition_frame_rate_enabled, frameRateEnableDesc);
     this->declare_parameter<double>("camera.frame_rate",
                                     camera_parameters_.frame_rate);
+
+    // camera.pixel_format
+    std::ostringstream json_enum;
+    json_enum << "{\"enum\":[";
+    for (size_t i = 0; i < pixel_format_options_.size(); ++i) {
+      json_enum << "\"" << pixel_format_options_[i] << "\""
+                << (i + 1 < pixel_format_options_.size() ? "," : "");
+    }
+    json_enum << "]}";
+
+    rcl_interfaces::msg::ParameterDescriptor pixelFormatDesc;
+    pixelFormatDesc.description = pixel_format_desc_.str();
+    pixelFormatDesc.additional_constraints = json_enum.str();
+
+    this->declare_parameter<std::string>(
+        "camera.pixel_format",
+        camera_parameters_.pixel_format,
+        pixelFormatDesc);
+
+    // camera.resolution
+    rcl_interfaces::msg::ParameterDescriptor resolutionDesc;
+    resolutionDesc.description            = resolution_desc_.str();
+    resolutionDesc.additional_constraints =
+      "{\"enum\": ["
+        + std::accumulate(
+            std::next(resolution_options_.begin()), resolution_options_.end(),
+            std::string("\"") + resolution_options_[0] + "\"",
+            [](auto a, auto &b){ return a + ",\"" + b + "\""; })
+        + "]}";
+
+    this->declare_parameter<std::string>(
+      "camera.resolution",
+      camera_parameters_.resolution,
+      resolutionDesc);
+
   }
 
   // Initialize ROS 2 publishers based on stream flags
@@ -1099,7 +1162,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
           RCLCPP_INFO(this->get_logger(), "uniqueness_ratio updated: %d",
                       camera_parameters_.uniqueness_ratio);
         }
-      } else if (name == "stereo.post_process_disparity") {
+      } else if (name == "post_processing.enable") {
         camera_parameters_.post_process_disparity = param.as_bool();
         RCLCPP_INFO(
             this->get_logger(), "Post Processing Disparity: %s",
@@ -1271,6 +1334,39 @@ class StereoImagePublisherNode : public rclcpp::Node {
                         camera_parameters_.gain_value);
           }
         }
+      } else if (name == "camera.pixel_format") {
+        std::string requested_format = param.as_string();
+        if (requested_format != camera_parameters_.pixel_format) {
+          if (!SpinStereo::set_pixel_format(p_cam_, requested_format)) {
+            RCLCPP_ERROR(this->get_logger(),
+                        "Failed to set pixel format to '%s'",
+                        requested_format.c_str());
+            result.successful = false;
+          } else {
+            camera_parameters_.pixel_format = requested_format;
+            RCLCPP_INFO(this->get_logger(), "pixel_format updated: %s",
+                        camera_parameters_.pixel_format.c_str());
+            do_update_pixel_format_ = true;
+            result.successful = true;
+          }
+        }
+      } else if (name == "camera.resolution") {
+        std::string requested = param.as_string();
+        if (requested != camera_parameters_.resolution) {
+          if (!SpinStereo::set_stereo_resolution(p_cam_, requested)) {
+            RCLCPP_ERROR(this->get_logger(),
+                        "Failed to set resolution to '%s'",
+                        requested.c_str());
+            result.successful = false;
+          } else {
+            camera_parameters_.resolution = requested;
+            RCLCPP_INFO(this->get_logger(),
+                        "resolution updated: %s",
+                        camera_parameters_.resolution.c_str());
+            do_update_resolution_ = true;
+            result.successful = true;
+          }
+        }
       } else if (name == "point_cloud.enable") {
         camera_parameters_.do_compute_point_cloud = param.as_bool();
         RCLCPP_INFO(
@@ -1287,8 +1383,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
         }
       } else if (name == "point_cloud.decimation_factor") {
         int new_value = param.as_int();
-        new_value = std::clamp(new_value, 1,
-                               100);  // Assuming max decimation factor is 100
+        new_value = std::clamp(new_value, 1, 20);
         point_cloud_parameters_.decimationFactor = new_value;
         RCLCPP_INFO(this->get_logger(), "decimation_factor updated: %d",
                     point_cloud_parameters_.decimationFactor);
@@ -1326,27 +1421,59 @@ class StereoImagePublisherNode : public rclcpp::Node {
                       point_cloud_parameters_.ROIWorldCoordinatesZMax);
         } else if (name == "point_cloud.ROI_image_left") {
           int new_value = param.as_int();
-          new_value = std::clamp(new_value, 0, 2048);  // Assuming image width
+          int upper_limit;
+          if (!this->get_parameter("point_cloud.ROI_image_right", upper_limit)) {
+            int64_t stereo_width;
+            if (!get_int_value_from_node(*node_map_, "StereoWidth", stereo_width)) {
+              stereo_width = 2048;
+            }
+            upper_limit = (int)stereo_width;
+          }
+          new_value = std::clamp(new_value, 0, (int)upper_limit);
           point_cloud_parameters_.ROIImageLeft = new_value;
           RCLCPP_INFO(this->get_logger(), "ROI_image_left updated: %d",
                       point_cloud_parameters_.ROIImageLeft);
         } else if (name == "point_cloud.ROI_image_top") {
           int new_value = param.as_int();
-          new_value = std::clamp(new_value, 0, 1536);  // Assuming image height
+          int upper_limit;
+          if (!this->get_parameter("point_cloud.ROI_image_bottom", upper_limit)) {
+            int64_t stereo_height;
+            if (!get_int_value_from_node(*node_map_, "StereoHeight", stereo_height)) {
+              stereo_height = 1536;
+            }
+            upper_limit = (int)stereo_height;
+          }
+          new_value = std::clamp(new_value, 0, (int)upper_limit);
           point_cloud_parameters_.ROIImageTop = new_value;
           RCLCPP_INFO(this->get_logger(), "ROI_image_top updated: %d",
                       point_cloud_parameters_.ROIImageTop);
         } else if (name == "point_cloud.ROI_image_right") {
           int new_value = param.as_int();
-          new_value = std::clamp(new_value, 0, 2048);  // Assuming image width
+          int lower_limit;
+          if (!this->get_parameter("point_cloud.ROI_image_left", lower_limit)) {
+            lower_limit = 0;
+          }
+          int64_t stereo_width;
+          if (!get_int_value_from_node(*node_map_, "StereoWidth", stereo_width)) {
+            stereo_width = 2048;
+          }
+          new_value = std::clamp(new_value, lower_limit, (int)stereo_width);
           point_cloud_parameters_.ROIImageRight = new_value;
           RCLCPP_INFO(this->get_logger(), "ROI_image_right updated: %d",
                       point_cloud_parameters_.ROIImageRight);
         } else if (name == "point_cloud.ROI_image_bottom") {
           int new_value = param.as_int();
-          new_value = std::clamp(new_value, 0, 1536);  // Assuming image height
+          int lower_limit;
+          if (!this->get_parameter("point_cloud.ROI_image_top", lower_limit)) {
+            lower_limit = 0;
+          }
+          int64_t stereo_height;
+          if (!get_int_value_from_node(*node_map_, "StereoHeight", stereo_height)) {
+            stereo_height = 1536;
+          }
+          new_value = std::clamp(new_value, lower_limit, (int)stereo_height);
           point_cloud_parameters_.ROIImageBottom = new_value;
-          RCLCPP_INFO(this->get_logger(), "ROI_image_bottom updated: %d",
+          RCLCPP_INFO(this->get_logger(), "ROI_image_botom updated: %d",
                       point_cloud_parameters_.ROIImageBottom);
         }
       }
@@ -1669,6 +1796,103 @@ class StereoImagePublisherNode : public rclcpp::Node {
       }
     }
 
+    // Poll pixel_format
+    std::string polled_format;
+    if (get_pixel_format(p_cam_, polled_format)) {
+      if (camera_parameters_.pixel_format != polled_format) {
+        camera_parameters_.pixel_format = polled_format;
+      }
+    }
+
+    // Second if: Update ROS parameter if value changed
+    std::string current_ros_param_format;
+    if (this->get_parameter("camera.pixel_format", current_ros_param_format)) {
+      if (camera_parameters_.pixel_format != current_ros_param_format || do_update_pixel_format_) {
+        this->set_parameter(rclcpp::Parameter("camera.pixel_format", camera_parameters_.pixel_format));
+        RCLCPP_DEBUG(this->get_logger(),
+                    "pixel_format updated from camera node: %s",
+                    camera_parameters_.pixel_format.c_str());
+        do_update_pixel_format_ = false;
+      }
+    }
+
+    // --- Poll stereo_resolution
+    std::string polled_resolution;
+    if (get_stereo_resolution(p_cam_, polled_resolution)) {
+      if (camera_parameters_.resolution != polled_resolution) {
+        camera_parameters_.resolution = polled_resolution;
+      }
+    }
+
+    // Second if: Update ROS parameter if value changed (or we flagged a fallback)
+    std::string current_ros_param_resolution;
+    if (this->get_parameter("camera.resolution", current_ros_param_resolution)) {
+      if (camera_parameters_.resolution != current_ros_param_resolution
+          || do_update_resolution_)
+      {
+        this->set_parameter(
+          rclcpp::Parameter("camera.resolution",
+                            camera_parameters_.resolution));
+        RCLCPP_DEBUG(this->get_logger(),
+                    "camera.resolution updated from camera node: %s",
+                    camera_parameters_.resolution.c_str());
+
+        if (!configure_stereo_processing(p_cam_->GetNodeMap(),
+                                        stereo_parameters_)) {
+          RCLCPP_ERROR(this->get_logger(),
+                      "Failed to configure stereo processing parameters after updating stereo resolution.");
+        } else {
+          this->set_parameter(rclcpp::Parameter("stereo.focal_length", stereo_parameters_.focalLength));
+          this->set_parameter(rclcpp::Parameter("stereo.principal_point_u", stereo_parameters_.principalPointU));
+          this->set_parameter(rclcpp::Parameter("stereo.principal_point_v", stereo_parameters_.principalPointV));
+          
+          point_cloud_generator.setPointCloudExtents(
+            p_cam_->GetNodeMap(), point_cloud_parameters_);
+
+          // and update the ROS parameters so your clamping ranges also refresh
+          this->set_parameter(
+            rclcpp::Parameter("point_cloud.ROI_image_left",
+                              static_cast<int64_t>(point_cloud_parameters_.ROIImageLeft)));
+          this->set_parameter(
+            rclcpp::Parameter("point_cloud.ROI_image_top",
+                              static_cast<int64_t>(point_cloud_parameters_.ROIImageTop)));
+          this->set_parameter(
+            rclcpp::Parameter("point_cloud.ROI_image_right",
+                              static_cast<int64_t>(point_cloud_parameters_.ROIImageRight)));
+          this->set_parameter(
+            rclcpp::Parameter("point_cloud.ROI_image_bottom",
+                              static_cast<int64_t>(point_cloud_parameters_.ROIImageBottom)));
+        }
+        do_update_resolution_ = false;
+      }
+    }
+
+    int current_ros_param_ROI;
+    if (this->get_parameter("point_cloud.ROI_image_left", current_ros_param_ROI)) {
+      if (point_cloud_parameters_.ROIImageLeft != current_ros_param_ROI) {
+        this->set_parameter(
+          rclcpp::Parameter("point_cloud.ROI_image_left", static_cast<int64_t>(point_cloud_parameters_.ROIImageLeft)));
+      }
+    }
+    if (this->get_parameter("point_cloud.ROI_image_right", current_ros_param_ROI)) {
+      if (point_cloud_parameters_.ROIImageRight != current_ros_param_ROI) {
+        this->set_parameter(
+          rclcpp::Parameter("point_cloud.ROI_image_right", static_cast<int64_t>(point_cloud_parameters_.ROIImageRight)));
+      }
+    }
+    if (this->get_parameter("point_cloud.ROI_image_top", current_ros_param_ROI)) {
+      if (point_cloud_parameters_.ROIImageTop != current_ros_param_ROI) {
+        this->set_parameter(
+          rclcpp::Parameter("point_cloud.ROI_image_top", static_cast<int64_t>(point_cloud_parameters_.ROIImageTop)));
+      }
+    }
+    if (this->get_parameter("point_cloud.ROI_image_bottom", current_ros_param_ROI)) {
+      if (point_cloud_parameters_.ROIImageBottom != current_ros_param_ROI) {
+        this->set_parameter(
+          rclcpp::Parameter("point_cloud.ROI_image_bottom", static_cast<int64_t>(point_cloud_parameters_.ROIImageBottom)));
+      }
+    }
+
     // Poll raw_sensor_1_transmit_enabled
     bool raw_sensor1_transmit_enabled =
         is_raw_sensor_1_transmit_enabled(p_cam_);
@@ -1867,31 +2091,39 @@ class StereoImagePublisherNode : public rclcpp::Node {
           !image_list
                .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
                ->IsIncomplete()) {
-        // Clear the existing point cloud to prepare for new data.
-        point_cloud->clear();
 
-        float min_disparity = camera_parameters_.scan3d_coordinate_offset;
-
-        // If the rectified image is available, use it to color the point cloud.
-        if (camera_parameters_.stream_transmit_flags
-                .rect_sensor_1_transmit_enabled &&
-            !image_list
-                 .GetByPayloadType(
-                     SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1)
-                 ->IsIncomplete()) {
-          point_cloud_generator.compute_point_cloud(
+        point_cloud_generator.compute_point_cloud(
               disparity_image,
               image_list.GetByPayloadType(
                   SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
-              min_disparity, stereo_parameters_, point_cloud_parameters_,
-              point_cloud);
-        } else {
-          // If no rectified image is available, compute the point cloud without
-          // coloring.
-          point_cloud_generator.compute_point_cloud(
-              disparity_image, min_disparity, stereo_parameters_,
-              point_cloud_parameters_, point_cloud);
-        }
+                  stereo_parameters_, point_cloud_parameters_,
+                  point_cloud);
+
+        // // Clear the existing point cloud to prepare for new data.
+        // point_cloud->clear();
+
+        // float min_disparity = camera_parameters_.scan3d_coordinate_offset;
+
+        // // If the rectified image is available, use it to color the point cloud.
+        // if (camera_parameters_.stream_transmit_flags
+        //         .rect_sensor_1_transmit_enabled &&
+        //     !image_list
+        //          .GetByPayloadType(
+        //              SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1)
+        //          ->IsIncomplete()) {
+        //   point_cloud_generator.compute_point_cloud(
+        //       disparity_image,
+        //       image_list.GetByPayloadType(
+        //           SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
+        //       min_disparity, stereo_parameters_, point_cloud_parameters_,
+        //       point_cloud);
+        // } else {
+        //   // If no rectified image is available, compute the point cloud without
+        //   // coloring.
+        //   point_cloud_generator.compute_point_cloud(
+        //       disparity_image, min_disparity, stereo_parameters_,
+        //       point_cloud_parameters_, point_cloud);
+        // }
       }
 
       // Get current ROS2 timestamp
@@ -1905,7 +2137,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
                ->IsIncomplete()) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1),
-                            raw_left_image_publisher_, "rgb8", time_stamp);
+                            raw_left_image_publisher_, time_stamp);
         if (save) {
           std::ostringstream filename;
           filename << "rawLeft_" << count << ".png";
@@ -1922,7 +2154,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
                ->IsIncomplete()) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2),
-                            raw_right_image_publisher_, "rgb8", time_stamp);
+                            raw_right_image_publisher_, time_stamp);
         if (save) {
           std::ostringstream filename;
           filename << "rawRight_" << count << ".png";
@@ -1941,7 +2173,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
           rect_left_camera_info_publisher_) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
-                            rect_left_image_publisher_, "rgb8", time_stamp);
+                            rect_left_image_publisher_, time_stamp);
                                                      
         auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1);
         int imageWidth = rect_left_img_ptr->GetWidth();
@@ -1973,7 +2205,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
           rect_right_camera_info_publisher_) {
         this->publish_image(image_list.GetByPayloadType(
                                 SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2),
-                            rect_right_image_publisher_, "rgb8", time_stamp);
+                            rect_right_image_publisher_, time_stamp);
                                                      
         auto rect_right_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
         int imageWidth = rect_right_img_ptr->GetWidth();
@@ -2058,30 +2290,76 @@ class StereoImagePublisherNode : public rclcpp::Node {
   void publish_image(
       ImagePtr imagePtr,
       rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher,
-      const std::string& encoding, rclcpp::Time time_stamp) {
-    if (publisher && imagePtr->GetData()) {
-      try {
-        cv::Mat cvImage(
-            imagePtr->GetHeight(), imagePtr->GetWidth(),
-            (imagePtr->GetPixelFormat() == PixelFormat_RGB8 ? CV_8UC3
-                                                            : CV_8UC1),
-            imagePtr->GetData(), imagePtr->GetStride());
+      rclcpp::Time time_stamp) {
 
-        // Convert to ROS Image message
-        auto msg =
-            cv_bridge::CvImage(std_msgs::msg::Header(), encoding, cvImage)
-                .toImageMsg();
-        msg->header.stamp = time_stamp;
-        publisher->publish(*msg);
-      } catch (const cv::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(),
-                     "OpenCV exception during image publishing: %s", e.what());
+    if (!publisher || !imagePtr || !imagePtr->GetData()) {
+      RCLCPP_WARN(this->get_logger(), "Publisher or image data is not initialized.");
+      return;
+    }
+
+    try {
+      cv::Mat cvImage;
+      std::string encoding;
+      auto pixelFormat = imagePtr->GetPixelFormat();
+      Spinnaker::ImagePtr convertedImage = imagePtr;
+
+      // Create an ImageProcessor to handle format conversions
+      Spinnaker::ImageProcessor processor;
+
+      switch (pixelFormat) {
+        case PixelFormat_RGB8:
+          cvImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(),
+                            CV_8UC3, imagePtr->GetData(), imagePtr->GetStride());
+          encoding = "rgb8";
+          break;
+
+        case PixelFormat_RGB12p:
+          convertedImage = processor.Convert(imagePtr, PixelFormat_RGB8);
+          cvImage = cv::Mat(convertedImage->GetHeight(), convertedImage->GetWidth(),
+                            CV_8UC3, convertedImage->GetData(), convertedImage->GetStride());
+          encoding = "rgb8";
+          break;
+
+        case PixelFormat_Mono8:
+          cvImage = cv::Mat(imagePtr->GetHeight(), imagePtr->GetWidth(),
+                            CV_8UC1, imagePtr->GetData(), imagePtr->GetStride());
+          encoding = "mono8";
+          break;
+
+        case PixelFormat_Mono12Packed:
+          convertedImage = processor.Convert(imagePtr, PixelFormat_Mono8);
+          cvImage = cv::Mat(convertedImage->GetHeight(), convertedImage->GetWidth(),
+                            CV_8UC1, convertedImage->GetData(), convertedImage->GetStride());
+          encoding = "mono8";
+          break;
+
+        case PixelFormat_YUV422Packed:
+          convertedImage = processor.Convert(imagePtr, PixelFormat_RGB8);
+          cvImage = cv::Mat(convertedImage->GetHeight(), convertedImage->GetWidth(),
+                            CV_8UC3, convertedImage->GetData(), convertedImage->GetStride());
+          encoding = "rgb8";
+          break;
+
+        default:
+          RCLCPP_ERROR(this->get_logger(), "Unsupported pixel format: %d",
+                      static_cast<int>(pixelFormat));
+          return;
       }
-    } else {
-      RCLCPP_WARN(this->get_logger(),
-                  "Publisher or image data is not initialized.");
+
+      auto msg =
+          cv_bridge::CvImage(std_msgs::msg::Header(), encoding, cvImage).toImageMsg();
+      msg->header.stamp = time_stamp;
+      publisher->publish(*msg);
+
+    } catch (const cv::Exception& e) {
+      RCLCPP_ERROR(this->get_logger(),
+                  "OpenCV exception during image publishing: %s", e.what());
+    } catch (const Spinnaker::Exception& e) {
+      RCLCPP_ERROR(this->get_logger(),
+                  "Spinnaker exception during image conversion: %s", e.what());
     }
   }
+
 
   // Publish ROS disparity image message
   void publish_disparity_image(ImagePtr disparity_image_ptr,
@@ -2186,8 +2464,11 @@ int main(int argc, char** argv) {
   // Initialize ROS 2
   rclcpp::init(argc, argv);
 
+  rclcpp::NodeOptions opts;
+  opts.use_intra_process_comms(true);
+
   // Create the node
-  auto node = std::make_shared<StereoImagePublisherNode>();
+  auto node = std::make_shared<StereoImagePublisherNode>(opts);
 
   // Spin the node with a MultiThreadedExecutor
   // rclcpp::executors::MultiThreadedExecutor executor;

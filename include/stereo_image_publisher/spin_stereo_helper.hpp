@@ -123,6 +123,38 @@ bool set_frame_rate(CameraPtr p_cam, float frame_rate);
 bool get_frame_rate(CameraPtr p_cam, float &resulting_frame_rate);
 
 /**
+ * @brief Sets the pixel format on the camera.
+ * @param p_cam Pointer to the camera object.
+ * @param format_name Symbolic name of the desired pixel format (e.g. "RGB8Packed").
+ * @return True if the pixel format was set successfully, false otherwise.
+ */
+bool set_pixel_format(CameraPtr p_cam, const std::string &format_name);
+
+/**
+ * @brief Retrieves the current pixel format from the camera.
+ * @param p_cam Pointer to the camera object.
+ * @param format_name_out Reference to store the symbolic pixel format name.
+ * @return True if successful, false otherwise.
+ */
+bool get_pixel_format(CameraPtr p_cam, std::string &format_name_out);
+
+/**
+ * @brief Sets the stereo resolution (e.g. "Full", "Half") on the camera.
+ * @param p_cam Pointer to the camera object.
+ * @param resolution_name Symbolic name of the desired stereo resolution.
+ * @return True if the resolution was set successfully, false otherwise.
+ */
+bool set_stereo_resolution(CameraPtr p_cam, const std::string &resolution_name);
+
+/**
+ * @brief Retrieves the current stereo resolution from the camera.
+ * @param p_cam Pointer to the camera object.
+ * @param resolution_out Reference to store the symbolic resolution name.
+ * @return True if successful, false otherwise.
+ */
+bool get_stereo_resolution(CameraPtr p_cam, std::string &resolution_out);
+
+/**
  * @brief Configures the acquisition mode of the camera.
  * @param node_map Reference to the node map object containing the camera
  * settings.
@@ -155,15 +187,6 @@ bool configure_stereo_processing(INodeMap &node_map_camera,
  */
 bool configure_acquisition(CameraPtr p_cam,
                            StreamTransmitFlags &stream_transmit_flags);
-
-/**
- * @brief Retrieves the disparity scale factor from the camera settings.
- * @param node_map Reference to the node map object.
- * @param disparityScaleFactor Reference to store the retrieved disparity scale
- * factor.
- * @return True if successful, false otherwise.
- */
-bool GetDisparityScaleFactor(INodeMap &node_map, float &disparityScaleFactor);
 
 /**
  * @brief Retrieves the disparity scale factor (the factor to multiply to get
@@ -207,22 +230,6 @@ bool get_min_float_value_from_node(INodeMap &node_map,
  */
 bool get_max_float_value_from_node(INodeMap &node_map,
                                    const gcstring &node_name, float &node_val);
-
-/**
- * @brief Updates the camera_parameters from the stream enable variable from the
- * camera.
- * @return True if successful, false otherwise.
- */
-bool GetTransmittedCameraStreams(CameraPtr p_cam,
-                                 StreamTransmitFlags &stream_transmit_flags);
-
-/**
- * @brief Sets the stream enable variable on the camera from the
- * camera_parameters.
- * @return True if successful, false otherwise.
- */
-bool SetTransmittedCameraStreams(CameraPtr p_cam,
-                                 StreamTransmitFlags &stream_transmit_flags);
 
 /**
  * @brief Sets the pixel format for all camera streams.

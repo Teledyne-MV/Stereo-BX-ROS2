@@ -99,6 +99,8 @@ class StereoParameters {
   float gain_value;  ///< Gain value.
   bool acquisition_frame_rate_enabled;
   float frame_rate;
+  std::string pixel_format;
+  std::string resolution;
 };
 }  // namespace SpinStereo
 
