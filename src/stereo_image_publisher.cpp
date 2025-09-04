@@ -2091,6 +2091,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
           !image_list
                .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
                ->IsIncomplete()) {
+               
+        if (stereo_parameters_.coordinateOffset != camera_parameters_.scan3d_coordinate_offset) {
+            stereo_parameters_.coordinateOffset = camera_parameters_.scan3d_coordinate_offset;
+        }
 
         point_cloud_generator.compute_point_cloud(
               disparity_image,
