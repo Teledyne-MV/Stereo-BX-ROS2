@@ -16,8 +16,11 @@
 // THIS SOFTWARE OR ITS DERIVATIVES.
 //=============================================================================
 
+#include <array>
+#include <chrono>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include <cv_bridge/cv_bridge.h>
 
@@ -25,12 +28,14 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <opencv2/opencv.hpp>
+#include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
 #include "ImageUtilityStereo.h"
 #include "PointCloud.h"
 #include "Spinnaker.h"
+#include "stereo_image_publisher/depth_utils.hpp"
 #include "stereo_image_publisher/spin_stereo_helper.hpp"
 #include "stereo_image_publisher/stereo_parameters.hpp"
 
@@ -134,7 +139,7 @@ sensor_msgs::msg::CameraInfo generateCameraInfo(
 
 class StereoImagePublisherNode : public rclcpp::Node {
  public:
-  StereoImagePublisherNode(const rclcpp::NodeOptions & options) : Node("stereo_image_publisher_node") {
+  StereoImagePublisherNode(const rclcpp::NodeOptions & options) : Node("stereo_image_publisher_node", options) {
 
     declare_serial_number_parameter();
 
@@ -198,21 +203,32 @@ class StereoImagePublisherNode : public rclcpp::Node {
     rect_left_image_publisher_.reset();
     rect_right_image_publisher_.reset();
     disparity_image_publisher_.reset();
+    depth_image_publisher_.reset();
     point_cloud_publisher_.reset();
     RCLCPP_INFO(this->get_logger(), "Publishers reset.");
 
     // Lock the mutex before accessing camera resources
     {
       std::lock_guard<std::mutex> lock(camera_mutex_);
-      if (p_cam_ && p_cam_->IsStreaming()) {
+      if (p_cam_) {
         try {
-          p_cam_->EndAcquisition();
-          p_cam_->DeInit();
-          RCLCPP_INFO(this->get_logger(),
-                      "Camera acquisition ended and deinitialized.");
+          if (p_cam_->IsStreaming()) {
+            p_cam_->EndAcquisition();
+          }
         } catch (const Spinnaker::Exception& e) {
           RCLCPP_ERROR(this->get_logger(),
-                       "Exception during camera shutdown: %s", e.what());
+                       "Exception while ending acquisition during shutdown: %s",
+                       e.what());
+        }
+
+        try {
+          p_cam_->DeInit();
+          RCLCPP_INFO(this->get_logger(),
+                      "Camera deinitialized.");
+        } catch (const Spinnaker::Exception& e) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "Exception during camera deinitialization: %s",
+                       e.what());
         }
       }
 
@@ -242,6 +258,8 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rect_right_camera_info_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
       disparity_image_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+      depth_image_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
       point_cloud_publisher_;
 
@@ -280,6 +298,14 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
   // Point cloud generator
   PointCloudGenerator point_cloud_generator;
+
+  static constexpr int64_t kWarnThrottleNs = 5 * 1000 * 1000 * 1000LL;
+
+  // Timestamp handling
+  bool use_camera_timestamp_{true};
+  bool camera_time_base_initialized_{false};
+  uint64_t camera_time_base_ns_{0};
+  rclcpp::Time ros_time_at_camera_base_;
 
   // ROS 2 Timer
   rclcpp::TimerBase::SharedPtr timer_;
@@ -325,7 +351,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
               cam_list.Clear();  // Clear the camera list to release resources
               system
                   ->ReleaseInstance();  // Release the Spinnaker system instance
-              return -1;  // Return error code as no cameras are available
+              return false;  // Return error code as no cameras are available
             }
             p_cam_ = cam;
             serial_number_ = camera_serial;
@@ -994,20 +1020,35 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
     // camera.resolution
     rcl_interfaces::msg::ParameterDescriptor resolutionDesc;
-    resolutionDesc.description            = resolution_desc_.str();
-    resolutionDesc.additional_constraints =
-      "{\"enum\": ["
-        + std::accumulate(
-            std::next(resolution_options_.begin()), resolution_options_.end(),
-            std::string("\"") + resolution_options_[0] + "\"",
-            [](auto a, auto &b){ return a + ",\"" + b + "\""; })
-        + "]}";
+    resolutionDesc.description = resolution_desc_.str();
+    if (!resolution_options_.empty()) {
+      std::ostringstream resolution_json_enum;
+      resolution_json_enum << "{\"enum\":[";
+      for (size_t i = 0; i < resolution_options_.size(); ++i) {
+        resolution_json_enum << "\"" << resolution_options_[i] << "\""
+                             << (i + 1 < resolution_options_.size() ? "," : "");
+      }
+      resolution_json_enum << "]}";
+      resolutionDesc.additional_constraints = resolution_json_enum.str();
+    } else {
+      resolutionDesc.additional_constraints = "";
+      RCLCPP_WARN(this->get_logger(),
+                  "No StereoResolution options discovered; declaring "
+                  "'camera.resolution' without enum constraints.");
+    }
 
     this->declare_parameter<std::string>(
       "camera.resolution",
       camera_parameters_.resolution,
       resolutionDesc);
 
+    rcl_interfaces::msg::ParameterDescriptor cameraTimestampDesc;
+    cameraTimestampDesc.description =
+        "Use the camera hardware clock to time-stamp messages (aligned to the node clock).";
+    this->declare_parameter<bool>("camera.use_camera_timestamp",
+                                  use_camera_timestamp_,
+                                  cameraTimestampDesc);
+    this->get_parameter("camera.use_camera_timestamp", use_camera_timestamp_);
   }
 
   // Initialize ROS 2 publishers based on stream flags
@@ -1018,6 +1059,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     rect_left_image_publisher_.reset();
     rect_right_image_publisher_.reset();
     disparity_image_publisher_.reset();
+    depth_image_publisher_.reset();
     point_cloud_publisher_.reset();
     rect_left_camera_info_publisher_.reset();
     rect_right_camera_info_publisher_.reset();
@@ -1027,13 +1069,21 @@ class StereoImagePublisherNode : public rclcpp::Node {
         "serial_" +
         std::string(p_cam_->TLDevice.DeviceSerialNumber.GetValue().c_str());
 
+    // Intra-process communication requires VOLATILE durability.
+    // Use RELIABLE to stay compatible with subscribers that request reliable
+    // QoS (e.g. many default image subscribers), while remaining compatible
+    // with best-effort subscribers.
+    const auto stream_qos = rclcpp::QoS(rclcpp::KeepLast(10))
+                                .reliable()
+                                .durability_volatile();
+
     // Conditionally create publishers based on the transmission flags
     if (camera_parameters_.stream_transmit_flags
             .raw_sensor_1_transmit_enabled) {
       raw_left_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/raw_left_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(), "Raw left image publisher created.");
     }
 
@@ -1042,7 +1092,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
       raw_right_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/raw_right_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(), "Raw right image publisher created.");
     }
 
@@ -1051,11 +1101,11 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rect_left_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/rectified_left_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       rect_left_camera_info_publisher_ =
           this->create_publisher<sensor_msgs::msg::CameraInfo>(
               "Bumblebee_X/" + serial_number + "/left_camera_info",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(),
                   "Rectified left image publisher created.");
     }
@@ -1065,11 +1115,11 @@ class StereoImagePublisherNode : public rclcpp::Node {
       rect_right_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/rectified_right_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       rect_right_camera_info_publisher_ =
           this->create_publisher<sensor_msgs::msg::CameraInfo>(
               "Bumblebee_X/" + serial_number + "/right_camera_info",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(),
                   "Rectified right image publisher created.");
     }
@@ -1078,16 +1128,22 @@ class StereoImagePublisherNode : public rclcpp::Node {
       disparity_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/disparity_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(), "Disparity image publisher created.");
+      depth_image_publisher_ =
+          this->create_publisher<sensor_msgs::msg::Image>(
+              "Bumblebee_X/" + serial_number + "/depth",
+              stream_qos);
+      RCLCPP_INFO(this->get_logger(), "Depth image publisher created.");
     }
 
     if (camera_parameters_.do_compute_point_cloud &&
-        camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+        camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
+        camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled) {
       point_cloud_publisher_ =
           this->create_publisher<sensor_msgs::msg::PointCloud2>(
               "Bumblebee_X/" + serial_number + "/point_cloud",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(), "Point cloud publisher created.");
     }
   }
@@ -1202,6 +1258,14 @@ class StereoImagePublisherNode : public rclcpp::Node {
                         ? "enabled"
                         : "disabled");
         updatePublisher = true;
+        if (!camera_parameters_.stream_transmit_flags
+                 .rect_sensor_1_transmit_enabled &&
+            camera_parameters_.do_compute_point_cloud) {
+          camera_parameters_.do_compute_point_cloud = false;
+          RCLCPP_WARN(this->get_logger(),
+                      "Disabling point cloud because rectified left stream is "
+                      "required for coloring.");
+        }
       } else if (name == "stream.rect_right_enabled") {
         camera_parameters_.stream_transmit_flags
             .rect_sensor_2_transmit_enabled = param.as_bool();
@@ -1211,6 +1275,18 @@ class StereoImagePublisherNode : public rclcpp::Node {
                         ? "enabled"
                         : "disabled");
         updatePublisher = true;
+      } else if (name == "camera.use_camera_timestamp") {
+        bool new_value = param.as_bool();
+        if (new_value != use_camera_timestamp_) {
+          use_camera_timestamp_ = new_value;
+          camera_time_base_initialized_ = false;
+          RCLCPP_INFO(
+              this->get_logger(),
+              "Message timestamps now use the %s.",
+              use_camera_timestamp_
+                  ? "camera hardware clock aligned to the node clock"
+                  : "node/system clock");
+        }
       } else if (name == "stream.disparity_enabled") {
         camera_parameters_.stream_transmit_flags.disparity_transmit_enabled =
             param.as_bool();
@@ -1383,7 +1459,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
         }
       } else if (name == "point_cloud.decimation_factor") {
         int new_value = param.as_int();
-        new_value = std::clamp(new_value, 1, 20);
+        new_value = std::clamp(new_value, 1, 100);
         point_cloud_parameters_.decimationFactor = new_value;
         RCLCPP_INFO(this->get_logger(), "decimation_factor updated: %d",
                     point_cloud_parameters_.decimationFactor);
@@ -1473,7 +1549,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
           }
           new_value = std::clamp(new_value, lower_limit, (int)stereo_height);
           point_cloud_parameters_.ROIImageBottom = new_value;
-          RCLCPP_INFO(this->get_logger(), "ROI_image_botom updated: %d",
+          RCLCPP_INFO(this->get_logger(), "ROI_image_bottom updated: %d",
                       point_cloud_parameters_.ROIImageBottom);
         }
       }
@@ -1481,7 +1557,13 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
     if (updatePublisher) {
       RCLCPP_INFO(this->get_logger(), "Configuring streams");
+      bool resume_poll_timer = false;
+      if (poll_timer_) {
+        poll_timer_->cancel();
+        resume_poll_timer = true;
+      }
       try {
+        bool reconfig_ok = true;
         if (p_cam_->IsStreaming()) {
           p_cam_->EndAcquisition();
         }
@@ -1516,41 +1598,49 @@ class StereoImagePublisherNode : public rclcpp::Node {
                          "Error during stream reconfiguration: %s",
                          "Could not configure camera streams.");
             result.successful = false;
-            return result;
+            reconfig_ok = false;
           }
 
-          // Set throughput to current
-          RCLCPP_DEBUG(this->get_logger(),
-                       "Trying to set DeviceLinkThroughputLimit to "
-                       "DeviceLinkCurrentThroughput");
-          if (!set_device_link_throughput_to_current(p_cam_)) {
-            RCLCPP_WARN(this->get_logger(),
-                        "Unable to set DeviceLinkThroughputLimit to "
-                        "DeviceLinkCurrentThroughput. "
-                        "This might cause packet loss.");
-          }
-
-          // if more streams are enabled, the frame rate might change. Updating
-          // the resulting frame rate accordingly.
-          if (!get_frame_rate(p_cam_, camera_parameters_.frame_rate)) {
+          if (reconfig_ok) {
+            // Set throughput to current
             RCLCPP_DEBUG(this->get_logger(),
-                         "Could not read the updated frame rate. This might "
-                         "cause issues in timeout.");
-          }
+                         "Trying to set DeviceLinkThroughputLimit to "
+                         "DeviceLinkCurrentThroughput");
+            if (!set_device_link_throughput_to_current(p_cam_)) {
+              RCLCPP_WARN(this->get_logger(),
+                          "Unable to set DeviceLinkThroughputLimit to "
+                          "DeviceLinkCurrentThroughput. "
+                          "This might cause packet loss.");
+            }
 
-          if (!p_cam_->IsStreaming()) {
-            p_cam_->BeginAcquisition();
+            // if more streams are enabled, the frame rate might change. Updating
+            // the resulting frame rate accordingly.
+            if (!get_frame_rate(p_cam_, camera_parameters_.frame_rate)) {
+              RCLCPP_DEBUG(this->get_logger(),
+                           "Could not read the updated frame rate. This might "
+                           "cause issues in timeout.");
+            }
+
+            if (!p_cam_->IsStreaming()) {
+              p_cam_->BeginAcquisition();
+            }
           }
         } else {
           RCLCPP_WARN(this->get_logger(), "All streams have been disabled.");
         }
 
-        initialize_publishers();
+        if (reconfig_ok) {
+          initialize_publishers();
+        }
 
       } catch (const Spinnaker::Exception& e) {
         RCLCPP_ERROR(this->get_logger(),
                      "Error during stream reconfiguration: %s", e.what());
         result.successful = false;
+      }
+
+      if (resume_poll_timer && poll_timer_) {
+        poll_timer_->reset();
       }
     }
 
@@ -2035,6 +2125,102 @@ class StereoImagePublisherNode : public rclcpp::Node {
                 : "disabled");
       }
     }
+
+    // Keep point_cloud.enable ROS parameter in sync with internal state,
+    // without modifying parameters inside their own set callback.
+    bool current_ros_param_point_cloud_enable;
+    if (this->get_parameter("point_cloud.enable",
+                            current_ros_param_point_cloud_enable)) {
+      if (camera_parameters_.do_compute_point_cloud !=
+          current_ros_param_point_cloud_enable) {
+        this->set_parameter(rclcpp::Parameter(
+            "point_cloud.enable", camera_parameters_.do_compute_point_cloud));
+        RCLCPP_DEBUG(
+            this->get_logger(),
+            "point_cloud.enable synced to %s because compute state changed.",
+            camera_parameters_.do_compute_point_cloud ? "enabled" : "disabled");
+      }
+    }
+  }
+
+  ImagePtr try_get_image(ImageList& image_list,
+                         Spinnaker::ImagePayloadType payload_type,
+                         const char* payload_name) {
+    try {
+      auto image = image_list.GetByPayloadType(payload_type);
+      if (!image || image->IsIncomplete()) {
+        return nullptr;
+      }
+      return image;
+    } catch (const Spinnaker::Exception& e) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), kWarnThrottleNs,
+          "Payload %s unavailable: %s", payload_name, e.what());
+      return nullptr;
+    }
+  }
+
+  ImagePtr select_timestamp_image(ImageList& image_list) {
+    const std::array<std::pair<Spinnaker::ImagePayloadType, bool>, 5>
+        payload_preference = {{
+            {SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1,
+             camera_parameters_.stream_transmit_flags
+                 .rect_sensor_1_transmit_enabled},
+            {SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2,
+             camera_parameters_.stream_transmit_flags
+                 .rect_sensor_2_transmit_enabled},
+            {SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1,
+             camera_parameters_.stream_transmit_flags
+                 .raw_sensor_1_transmit_enabled},
+            {SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2,
+             camera_parameters_.stream_transmit_flags
+                 .raw_sensor_2_transmit_enabled},
+            {SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1,
+             camera_parameters_.stream_transmit_flags
+                 .disparity_transmit_enabled},
+        }};
+
+    for (const auto& entry : payload_preference) {
+      if (!entry.second) {
+        continue;
+      }
+      auto image = try_get_image(image_list, entry.first, "timestamp_source");
+      if (image) {
+        return image;
+      }
+    }
+    return nullptr;
+  }
+
+  rclcpp::Time build_message_timestamp(ImageList& image_list) {
+    if (!use_camera_timestamp_) {
+      return this->now();
+    }
+
+    auto timestamp_image = select_timestamp_image(image_list);
+    if (!timestamp_image) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), kWarnThrottleNs,
+          "Unable to select an image for camera timestamp; falling back to node clock.");
+      return this->now();
+    }
+
+    const uint64_t camera_timestamp_ns = timestamp_image->GetTimeStamp();
+    if (!camera_time_base_initialized_ || camera_timestamp_ns < camera_time_base_ns_) {
+      camera_time_base_ns_ = camera_timestamp_ns;
+      ros_time_at_camera_base_ = this->now();
+      camera_time_base_initialized_ = true;
+      RCLCPP_INFO(this->get_logger(),
+                  "Initialized camera timestamp base using %lu (ns).",
+                  static_cast<unsigned long>(camera_time_base_ns_));
+    }
+
+    const uint64_t delta_ns = camera_timestamp_ns - camera_time_base_ns_;
+    const auto stamped_time_ns =
+        ros_time_at_camera_base_.nanoseconds() +
+        static_cast<int64_t>(delta_ns);
+
+    return rclcpp::Time(stamped_time_ns, this->get_clock()->get_clock_type());
   }
 
   // Timer callback for main loop
@@ -2046,6 +2232,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     ImagePtr disparity_image;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud(
         new pcl::PointCloud<pcl::PointXYZRGB>());
+    bool point_cloud_ready = false;
     int count = 1;
     bool save =
         false;  // Set to true if you want to save images and point clouds
@@ -2061,47 +2248,64 @@ class StereoImagePublisherNode : public rclcpp::Node {
         return;
       }
 
-      // Apply post-processing on the disparity image if the corresponding flags
-      // are enabled. Ensure the disparity image is not incomplete before
-      // applying the filter.
+      ImagePtr disparity_ptr = nullptr;
       if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
-               ->IsIncomplete()) {
+          disparity_image_publisher_) {
+        disparity_ptr = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1,
+            "DISPARITY_SENSOR1");
+      }
+
+      if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
+          disparity_ptr) {
         if (camera_parameters_.post_process_disparity) {
-          // Apply a speckle filter to clean up the disparity image using the
-          // provided parameters.
           disparity_image = ImageUtilityStereo::FilterSpeckles(
-              image_list.GetByPayloadType(
-                  SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1),
-              camera_parameters_.max_speckle_size, camera_parameters_.max_diff,
+              disparity_ptr, camera_parameters_.max_speckle_size,
+              camera_parameters_.max_diff,
               stereo_parameters_.disparityScaleFactor,
               stereo_parameters_.invalidDataValue);
         } else {
-          // If no post-processing is needed, simply use the disparity image as
-          // it is.
-          disparity_image = image_list.GetByPayloadType(
-              SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1);
+          disparity_image = disparity_ptr;
         }
       }
 
       // If point cloud computation is enabled and the disparity image is valid:
       if (camera_parameters_.do_compute_point_cloud &&
-          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
-               ->IsIncomplete()) {
-               
-        if (stereo_parameters_.coordinateOffset != camera_parameters_.scan3d_coordinate_offset) {
-            stereo_parameters_.coordinateOffset = camera_parameters_.scan3d_coordinate_offset;
-        }
+          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+        auto disparity_ptr = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1,
+            "DISPARITY_SENSOR1");
+        if (!disparity_ptr) {
+          RCLCPP_WARN_THROTTLE(
+              this->get_logger(), *this->get_clock(), kWarnThrottleNs,
+              "Disparity image missing or incomplete; skipping point cloud.");
+        } else if (!camera_parameters_.stream_transmit_flags
+                        .rect_sensor_1_transmit_enabled) {
+          RCLCPP_WARN_THROTTLE(
+              this->get_logger(), *this->get_clock(), kWarnThrottleNs,
+              "Point cloud requires rectified left stream; skipping.");
+        } else {
+          auto rectified_left = try_get_image(
+              image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1,
+              "RECTIFIED_SENSOR1");
+          if (!rectified_left) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), kWarnThrottleNs,
+                "Rectified left image missing or incomplete; skipping point "
+                "cloud.");
+          } else {
+            if (stereo_parameters_.coordinateOffset !=
+                camera_parameters_.scan3d_coordinate_offset) {
+              stereo_parameters_.coordinateOffset =
+                  camera_parameters_.scan3d_coordinate_offset;
+            }
 
-        point_cloud_generator.compute_point_cloud(
-              disparity_image,
-              image_list.GetByPayloadType(
-                  SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
-                  stereo_parameters_, point_cloud_parameters_,
-                  point_cloud);
+            point_cloud_generator.compute_point_cloud(
+                disparity_image, rectified_left, stereo_parameters_,
+                point_cloud_parameters_, point_cloud);
+            point_cloud_ready = true;
+          }
+        }
 
         // // Clear the existing point cloud to prepare for new data.
         // point_cloud->clear();
@@ -2130,56 +2334,63 @@ class StereoImagePublisherNode : public rclcpp::Node {
         // }
       }
 
-      // Get current ROS2 timestamp
-      auto time_stamp = this->now();
+      auto time_stamp = build_message_timestamp(image_list);
 
       // Publish the raw left image if enabled and the image is complete.
+      ImagePtr raw_left_img = nullptr;
+      if (camera_parameters_.stream_transmit_flags.raw_sensor_1_transmit_enabled &&
+          raw_left_image_publisher_) {
+        raw_left_img = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1,
+            "RAW_SENSOR1");
+      }
       if (camera_parameters_.stream_transmit_flags
               .raw_sensor_1_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1)
-               ->IsIncomplete()) {
-        this->publish_image(image_list.GetByPayloadType(
-                                SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1),
-                            raw_left_image_publisher_, time_stamp);
+          raw_left_img) {
+        this->publish_image(raw_left_img, raw_left_image_publisher_,
+                            time_stamp);
         if (save) {
           std::ostringstream filename;
           filename << "rawLeft_" << count << ".png";
-          image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR1)
-              ->Save(filename.str().c_str());
+          raw_left_img->Save(filename.str().c_str());
         }
       }
 
       // Publish the raw right image if enabled and the image is complete.
+      ImagePtr raw_right_img = nullptr;
+      if (camera_parameters_.stream_transmit_flags.raw_sensor_2_transmit_enabled &&
+          raw_right_image_publisher_) {
+        raw_right_img = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2,
+            "RAW_SENSOR2");
+      }
       if (camera_parameters_.stream_transmit_flags
               .raw_sensor_2_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2)
-               ->IsIncomplete()) {
-        this->publish_image(image_list.GetByPayloadType(
-                                SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2),
-                            raw_right_image_publisher_, time_stamp);
+          raw_right_img) {
+        this->publish_image(raw_right_img, raw_right_image_publisher_,
+                            time_stamp);
         if (save) {
           std::ostringstream filename;
           filename << "rawRight_" << count << ".png";
-          image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RAW_SENSOR2)
-              ->Save(filename.str().c_str());
+          raw_right_img->Save(filename.str().c_str());
         }
       }
 
       // Publish the rectified left image if enabled and the image is complete.
+      ImagePtr rect_left_img_ptr = nullptr;
+      if (camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled &&
+          rect_left_image_publisher_) {
+        rect_left_img_ptr = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1,
+            "RECTIFIED_SENSOR1");
+      }
       if (camera_parameters_.stream_transmit_flags
               .rect_sensor_1_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1)
-               ->IsIncomplete() &&
-          rect_left_image_publisher_ &&
+          rect_left_img_ptr && rect_left_image_publisher_ &&
           rect_left_camera_info_publisher_) {
-        this->publish_image(image_list.GetByPayloadType(
-                                SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1),
-                            rect_left_image_publisher_, time_stamp);
-                                                     
-        auto rect_left_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1);
+        this->publish_image(rect_left_img_ptr, rect_left_image_publisher_,
+                            time_stamp);
+
         int imageWidth = rect_left_img_ptr->GetWidth();
         int imageHeight = rect_left_img_ptr->GetHeight();                            
         sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
@@ -2193,25 +2404,25 @@ class StereoImagePublisherNode : public rclcpp::Node {
         if (save) {
           std::ostringstream filename;
           filename << "rectLeft_" << count << ".png";
-          image_list
-              .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR1)
-              ->Save(filename.str().c_str());
+          rect_left_img_ptr->Save(filename.str().c_str());
         }
       }
 
       // Publish the rectified right image if enabled and the image is complete.
+      ImagePtr rect_right_img_ptr = nullptr;
+      if (camera_parameters_.stream_transmit_flags.rect_sensor_2_transmit_enabled &&
+          rect_right_image_publisher_) {
+        rect_right_img_ptr = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2,
+            "RECTIFIED_SENSOR2");
+      }
       if (camera_parameters_.stream_transmit_flags
               .rect_sensor_2_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2)
-               ->IsIncomplete() &&
-          rect_right_image_publisher_ &&
+          rect_right_img_ptr && rect_right_image_publisher_ &&
           rect_right_camera_info_publisher_) {
-        this->publish_image(image_list.GetByPayloadType(
-                                SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2),
-                            rect_right_image_publisher_, time_stamp);
-                                                     
-        auto rect_right_img_ptr = image_list.GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2);
+        this->publish_image(rect_right_img_ptr, rect_right_image_publisher_,
+                            time_stamp);
+
         int imageWidth = rect_right_img_ptr->GetWidth();
         int imageHeight = rect_right_img_ptr->GetHeight();
         sensor_msgs::msg::CameraInfo cam_info = generateCameraInfo(
@@ -2225,36 +2436,32 @@ class StereoImagePublisherNode : public rclcpp::Node {
         if (save) {
           std::ostringstream filename;
           filename << "rectRight_" << count << ".png";
-          image_list
-              .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_RECTIFIED_SENSOR2)
-              ->Save(filename.str().c_str());
+          rect_right_img_ptr->Save(filename.str().c_str());
         }
       }
 
       // Publish the disparity image if enabled and the image is complete.
       if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
-          !image_list
-               .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
-               ->IsIncomplete()) {
+          disparity_image) {
         this->publish_disparity_image(disparity_image, time_stamp, save, count);
         if (save) {
           std::ostringstream filename;
           filename << "monoDisparity_" << count << ".png";
-          image_list
-              .GetByPayloadType(SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
-              ->Save(filename.str().c_str());
+          disparity_image->Save(filename.str().c_str());
         }
       }
 
       // Publish the point cloud if enabled and the disparity image is
       // available.
-      if (camera_parameters_.do_compute_point_cloud) {
+      if (camera_parameters_.do_compute_point_cloud && point_cloud_ready) {
+        auto disparity_for_publish = try_get_image(
+            image_list, SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1,
+            "DISPARITY_SENSOR1");
         if (camera_parameters_.stream_transmit_flags
                 .disparity_transmit_enabled &&
-            !image_list
-                 .GetByPayloadType(
-                     SPINNAKER_IMAGE_PAYLOAD_TYPE_DISPARITY_SENSOR1)
-                 ->IsIncomplete()) {
+            camera_parameters_.stream_transmit_flags
+                .rect_sensor_1_transmit_enabled &&
+            disparity_for_publish) {
           this->publish_point_cloud(point_cloud, time_stamp, save, count);
         }
       }
@@ -2275,13 +2482,26 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
   // Reconnect camera logic
   void reconnect_camera() {
-    // Acquire the mutex at the beginning
-    std::lock_guard<std::mutex> lock(camera_mutex_);
+    // NOTE: timer_callback() already holds camera_mutex_ when calling this.
+    if (!p_cam_) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Reconnect requested but camera handle is null.");
+      return;
+    }
     // Attempt to reconnect to the camera
     try {
+      if (p_cam_->IsStreaming()) {
+        p_cam_->EndAcquisition();
+      }
       p_cam_->DeInit();
       p_cam_->Init();
-      p_cam_->BeginAcquisition();
+      if (camera_parameters_.stream_transmit_flags.raw_sensor_1_transmit_enabled ||
+          camera_parameters_.stream_transmit_flags.raw_sensor_2_transmit_enabled ||
+          camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled ||
+          camera_parameters_.stream_transmit_flags.rect_sensor_2_transmit_enabled ||
+          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+        p_cam_->BeginAcquisition();
+      }
       RCLCPP_INFO(this->get_logger(), "Camera reconnected successfully.");
     } catch (const Spinnaker::Exception& e) {
       RCLCPP_ERROR(this->get_logger(),
@@ -2368,54 +2588,23 @@ class StereoImagePublisherNode : public rclcpp::Node {
   // Publish ROS disparity image message
   void publish_disparity_image(ImagePtr disparity_image_ptr,
                                rclcpp::Time time_stamp, bool save, int count) {
-    if (disparity_image_publisher_ && disparity_image_ptr->GetData()) {
+    if ((disparity_image_publisher_ || depth_image_publisher_) &&
+        disparity_image_ptr->GetData()) {
       try {
         cv::Mat disparity_image(disparity_image_ptr->GetHeight(),
                                 disparity_image_ptr->GetWidth(), CV_16UC1,
                                 disparity_image_ptr->GetData(),
                                 disparity_image_ptr->GetStride());
 
-        // Convert disparity to depth visualization
-        float min_depth =
-            (stereo_parameters_.focalLength * stereo_parameters_.baseline) /
-            (256.0f + camera_parameters_.scan3d_coordinate_offset);
-        double max_depth = 20.0;  // Example maximum depth, adjust as needed
-
-        cv::Mat depth_image = cv::Mat::zeros(disparity_image.size(), CV_32F);
-
-        for (int row = 0; row < disparity_image.rows; ++row) {
-          for (int col = 0; col < disparity_image.cols; ++col) {
-            uint16_t d = disparity_image.at<uint16_t>(row, col);
-            if (d == 0) {
-              depth_image.at<float>(row, col) = 0.0f;
-            } else {
-              float disparity = static_cast<float>(d) *
-                                    stereo_parameters_.disparityScaleFactor +
-                                camera_parameters_.scan3d_coordinate_offset;
-              float depth = (stereo_parameters_.focalLength *
-                             stereo_parameters_.baseline) /
-                            disparity;
-              if (depth > max_depth || depth < min_depth) {
-                depth_image.at<float>(row, col) = 0.0f;
-              } else {
-                depth_image.at<float>(row, col) = depth;
-              }
-            }
-          }
-        }
-
-        cv::Mat normalized_depth;
-        cv::normalize(depth_image, normalized_depth, 0, 1, cv::NORM_MINMAX);
-
-        cv::Mat depth_8bits;
-        normalized_depth.convertTo(depth_8bits, CV_8U, 255);
-
-        cv::Mat colormap;
-        cv::applyColorMap(depth_8bits, colormap, cv::COLORMAP_HSV);
-
-        // Mask invalid depths
-        cv::Mat mask = (depth_image == 0);
-        colormap.setTo(cv::Scalar(0, 0, 0), mask);
+        cv::Mat depth_image = bumblebee_ros::depth_utils::compute_depth_image(
+            disparity_image,
+            stereo_parameters_.disparityScaleFactor,
+            camera_parameters_.scan3d_coordinate_offset,
+            stereo_parameters_.focalLength,
+            stereo_parameters_.baseline,
+            20.0f);
+        cv::Mat colormap =
+            bumblebee_ros::depth_utils::depth_to_colormap(depth_image);
 
         if (save) {
           std::ostringstream filename;
@@ -2423,11 +2612,21 @@ class StereoImagePublisherNode : public rclcpp::Node {
           cv::imwrite(filename.str(), colormap);
         }
 
-        // Convert to ROS Image message
-        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", colormap)
-                       .toImageMsg();
-        msg->header.stamp = time_stamp;
-        disparity_image_publisher_->publish(*msg);
+        if (depth_image_publisher_) {
+          auto depth_msg =
+              cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", depth_image)
+                  .toImageMsg();
+          depth_msg->header.stamp = time_stamp;
+          depth_image_publisher_->publish(*depth_msg);
+        }
+
+        if (disparity_image_publisher_) {
+          auto msg =
+              cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", colormap)
+                  .toImageMsg();
+          msg->header.stamp = time_stamp;
+          disparity_image_publisher_->publish(*msg);
+        }
       } catch (const cv::Exception& e) {
         RCLCPP_ERROR(this->get_logger(),
                      "OpenCV exception during disparity image publishing: %s",
@@ -2436,7 +2635,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
     } else {
       RCLCPP_WARN(
           this->get_logger(),
-          "Disparity image publisher or image data is not initialized.");
+          "Disparity/depth publisher or image data is not initialized.");
     }
   }
 
