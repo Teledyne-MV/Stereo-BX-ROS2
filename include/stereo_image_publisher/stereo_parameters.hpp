@@ -40,6 +40,8 @@ struct StreamTransmitFlags {
                                         ///< image transmission.
   bool disparity_transmit_enabled;      ///< Flag to enable disparity image
                                         ///< transmission.
+  bool depth_transmit_enabled;           ///< Flag to enable depth image
+                                        ///< transmission.
 
   std::string ToString() const {
     std::stringstream strstr("");
@@ -52,7 +54,9 @@ struct StreamTransmitFlags {
            << rect_sensor_1_transmit_enabled << std::endl;
     strstr << "rect_sensor_2_transmit_enabled "
            << rect_sensor_2_transmit_enabled << std::endl;
-    strstr << "disparity_transmit_enabled " << disparity_transmit_enabled;
+    strstr << "disparity_transmit_enabled " << disparity_transmit_enabled
+           << std::endl;
+    strstr << "depth_transmit_enabled " << depth_transmit_enabled;
 
     return strstr.str();
   };

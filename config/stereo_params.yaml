@@ -24,6 +24,7 @@ streaming_params:
   rect_left_enabled: true
   rect_right_enabled: false
   disparity_enabled: true
+  depth_enabled: true
 
 camera_params:
   auto_exposure: true

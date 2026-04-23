@@ -216,6 +216,10 @@ ros2 run bumblebee_ros stereo_image_publisher <serial_number>
 
 4. Select the "stereo_image_publisher_<serial_number>" node. Parameters for the publisher will populate on the righthand side and can be adjusted.
 
+5. Stream topics can be enabled or disabled using the checkboxes in the RQT Dynamic Reconfigure panel. Disabling disparity will automatically disable depth and point cloud, and enabling depth or point cloud will automatically enable disparity.
+
+   ![Enable/Disable Streams](images/rqt_enable_streams.png)
+
 #### Note: Increaing the frame rate might cause some unexpected behaviour in RViz like dropping image frames and point cloud from display. 
 
 ---
