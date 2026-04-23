@@ -25,6 +25,18 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
 )
 
+add_library(depth_utils
+  src/depth_utils.cpp
+)
+
+target_link_libraries(depth_utils
+  ${OpenCV_LIBRARIES}
+)
+
+ament_target_dependencies(depth_utils
+  OpenCV
+)
+
 # Add the executable with all the source files
 add_executable(stereo_image_publisher
   src/stereo_image_publisher.cpp
@@ -34,12 +46,12 @@ add_executable(stereo_image_publisher
 
 # Link libraries
 target_link_libraries(stereo_image_publisher
+  depth_utils
   ${Spinnaker_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
   ${pcl_conversions_LIBRARIES}
   ${pcl_ros_LIBRARIES}
-  ${sensors_msgs_LIBRARIES}
 )
 
 ament_target_dependencies(stereo_image_publisher
@@ -51,13 +63,27 @@ ament_target_dependencies(stereo_image_publisher
   PCL
   pcl_conversions
   pcl_ros
+  std_msgs
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_depth_utils test/test_depth_utils.cpp)
+  if(TARGET test_depth_utils)
+    target_link_libraries(test_depth_utils depth_utils ${OpenCV_LIBRARIES})
+    ament_target_dependencies(test_depth_utils OpenCV)
+  endif()
+endif()
 
 # Install the executable
 install(TARGETS
+  depth_utils
   stereo_image_publisher
   DESTINATION lib/${PROJECT_NAME}
 )
 
-ament_package()
+install(DIRECTORY include/
+  DESTINATION include
+)
 
+ament_package()
