@@ -316,6 +316,9 @@ class StereoImagePublisherNode : public rclcpp::Node {
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr parameter_callback_handle_;
 
+  // Deferred one-shot timers for parameter updates outside callbacks
+  std::vector<rclcpp::TimerBase::SharedPtr> deferred_timers_;
+
   // Initialize and configure the camera
   bool initialize_camera() {
     try {
@@ -787,6 +790,15 @@ class StereoImagePublisherNode : public rclcpp::Node {
         camera_parameters_.stream_transmit_flags.disparity_transmit_enabled,
         disparityDesc);
 
+    // stream.depth_enabled
+    rcl_interfaces::msg::ParameterDescriptor depthDesc;
+    depthDesc.description =
+        "Enable or disable transmission of depth images (32FC1, meters).";
+    this->declare_parameter<bool>(
+        "stream.depth_enabled",
+        camera_parameters_.stream_transmit_flags.depth_transmit_enabled,
+        depthDesc);
+
     // Point Cloud Parameters
     // point_cloud.enable
     rcl_interfaces::msg::ParameterDescriptor pointCloudEnableDesc;
@@ -1137,6 +1149,15 @@ class StereoImagePublisherNode : public rclcpp::Node {
       RCLCPP_INFO(this->get_logger(), "Depth image publisher created.");
     }
 
+    if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled &&
+        camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+      depth_image_publisher_ =
+          this->create_publisher<sensor_msgs::msg::Image>(
+              "Bumblebee_X/" + serial_number + "/depth_image",
+              rclcpp::QoS(10).transient_local());
+      RCLCPP_INFO(this->get_logger(), "Depth image publisher created.");
+    }
+
     if (camera_parameters_.do_compute_point_cloud &&
         camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
         camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled) {
@@ -1298,11 +1319,65 @@ class StereoImagePublisherNode : public rclcpp::Node {
         updatePublisher = true;
         if (!camera_parameters_.stream_transmit_flags
                  .disparity_transmit_enabled) {
-          if (camera_parameters_.do_compute_point_cloud) {
+          if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled) {
+            camera_parameters_.stream_transmit_flags.depth_transmit_enabled = false;
+            // Defer the parameter update since set_parameter cannot be called
+            // from within a parameter callback
+            size_t idx = deferred_timers_.size();
+            deferred_timers_.push_back(nullptr);
+            deferred_timers_[idx] = this->create_wall_timer(
+                std::chrono::milliseconds(0),
+                [this, idx]() {
+                  this->set_parameter(rclcpp::Parameter("stream.depth_enabled", false));
+                  if (idx < deferred_timers_.size() && deferred_timers_[idx]) {
+                    deferred_timers_[idx]->cancel();
+                  }
+                });
             RCLCPP_WARN(this->get_logger(),
-                        "Point cloud computation requires disparity "
-                        "transmission to be enabled.");
+                        "Depth transmission disabled because disparity "
+                        "transmission was disabled.");
           }
+          if (camera_parameters_.do_compute_point_cloud) {
+            camera_parameters_.do_compute_point_cloud = false;
+            size_t pc_idx = deferred_timers_.size();
+            deferred_timers_.push_back(nullptr);
+            deferred_timers_[pc_idx] = this->create_wall_timer(
+                std::chrono::milliseconds(0),
+                [this, pc_idx]() {
+                  this->set_parameter(rclcpp::Parameter("point_cloud.enable", false));
+                  if (pc_idx < deferred_timers_.size() && deferred_timers_[pc_idx]) {
+                    deferred_timers_[pc_idx]->cancel();
+                  }
+                });
+            RCLCPP_WARN(this->get_logger(),
+                        "Point cloud computation disabled because disparity "
+                        "transmission was disabled.");
+          }
+        }
+      } else if (name == "stream.depth_enabled") {
+        camera_parameters_.stream_transmit_flags.depth_transmit_enabled =
+            param.as_bool();
+        RCLCPP_INFO(
+            this->get_logger(), "depth_transmit_enabled updated: %s",
+            camera_parameters_.stream_transmit_flags.depth_transmit_enabled
+                ? "enabled"
+                : "disabled");
+        updatePublisher = true;
+        if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled &&
+            !camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled = true;
+          size_t disp_idx = deferred_timers_.size();
+          deferred_timers_.push_back(nullptr);
+          deferred_timers_[disp_idx] = this->create_wall_timer(
+              std::chrono::milliseconds(0),
+              [this, disp_idx]() {
+                this->set_parameter(rclcpp::Parameter("stream.disparity_enabled", true));
+                if (disp_idx < deferred_timers_.size() && deferred_timers_[disp_idx]) {
+                  deferred_timers_[disp_idx]->cancel();
+                }
+              });
+          RCLCPP_INFO(this->get_logger(),
+                      "Disparity transmission auto-enabled because depth was enabled.");
         }
       } else if (name == "camera.acquisition_frame_rate_enabled") {
         bool new_value = param.as_bool();
@@ -1449,13 +1524,21 @@ class StereoImagePublisherNode : public rclcpp::Node {
             this->get_logger(), "Point cloud computation: %s",
             camera_parameters_.do_compute_point_cloud ? "enabled" : "disabled");
         updatePublisher = true;
-        if (camera_parameters_.do_compute_point_cloud) {
-          if (!camera_parameters_.stream_transmit_flags
-                   .disparity_transmit_enabled) {
-            RCLCPP_WARN(this->get_logger(),
-                        "Point cloud computation requires disparity "
-                        "transmission to be enabled.");
-          }
+        if (camera_parameters_.do_compute_point_cloud &&
+            !camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
+          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled = true;
+          size_t disp_idx = deferred_timers_.size();
+          deferred_timers_.push_back(nullptr);
+          deferred_timers_[disp_idx] = this->create_wall_timer(
+              std::chrono::milliseconds(0),
+              [this, disp_idx]() {
+                this->set_parameter(rclcpp::Parameter("stream.disparity_enabled", true));
+                if (disp_idx < deferred_timers_.size() && deferred_timers_[disp_idx]) {
+                  deferred_timers_[disp_idx]->cancel();
+                }
+              });
+          RCLCPP_INFO(this->get_logger(),
+                      "Disparity transmission auto-enabled because point cloud was enabled.");
         }
       } else if (name == "point_cloud.decimation_factor") {
         int new_value = param.as_int();
@@ -2444,11 +2527,6 @@ class StereoImagePublisherNode : public rclcpp::Node {
       if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
           disparity_image) {
         this->publish_disparity_image(disparity_image, time_stamp, save, count);
-        if (save) {
-          std::ostringstream filename;
-          filename << "monoDisparity_" << count << ".png";
-          disparity_image->Save(filename.str().c_str());
-        }
       }
 
       // Publish the point cloud if enabled and the disparity image is
@@ -2585,17 +2663,32 @@ class StereoImagePublisherNode : public rclcpp::Node {
   }
 
 
-  // Publish ROS disparity image message
+  // Publish ROS disparity image message (raw 16UC1)
   void publish_disparity_image(ImagePtr disparity_image_ptr,
                                rclcpp::Time time_stamp, bool save, int count) {
-    if ((disparity_image_publisher_ || depth_image_publisher_) &&
-        disparity_image_ptr->GetData()) {
-      try {
-        cv::Mat disparity_image(disparity_image_ptr->GetHeight(),
-                                disparity_image_ptr->GetWidth(), CV_16UC1,
-                                disparity_image_ptr->GetData(),
-                                disparity_image_ptr->GetStride());
+    if (!disparity_image_publisher_ || !disparity_image_ptr->GetData()) {
+      RCLCPP_WARN(
+          this->get_logger(),
+          "Disparity image publisher or image data is not initialized.");
+      return;
+    }
 
+    try {
+      cv::Mat disparity_image(disparity_image_ptr->GetHeight(),
+                              disparity_image_ptr->GetWidth(), CV_16UC1,
+                              disparity_image_ptr->GetData(),
+                              disparity_image_ptr->GetStride());
+
+      // Publish raw disparity as 16UC1
+      auto disparity_msg =
+          cv_bridge::CvImage(std_msgs::msg::Header(), "16UC1", disparity_image)
+              .toImageMsg();
+      disparity_msg->header.stamp = time_stamp;
+      disparity_msg->header.frame_id = "camera_left_optical_frame";
+      disparity_image_publisher_->publish(*disparity_msg);
+
+      // Publish depth image as 32FC1 (meters) if enabled
+      if (depth_image_publisher_) {
         cv::Mat depth_image = bumblebee_ros::depth_utils::compute_depth_image(
             disparity_image,
             stereo_parameters_.disparityScaleFactor,
@@ -2603,39 +2696,26 @@ class StereoImagePublisherNode : public rclcpp::Node {
             stereo_parameters_.focalLength,
             stereo_parameters_.baseline,
             20.0f);
-        cv::Mat colormap =
-            bumblebee_ros::depth_utils::depth_to_colormap(depth_image);
 
-        if (save) {
-          std::ostringstream filename;
-          filename << "colored_depth_" << count << ".png";
-          cv::imwrite(filename.str(), colormap);
-        }
-
-        if (depth_image_publisher_) {
-          auto depth_msg =
-              cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", depth_image)
-                  .toImageMsg();
-          depth_msg->header.stamp = time_stamp;
-          depth_image_publisher_->publish(*depth_msg);
-        }
-
-        if (disparity_image_publisher_) {
-          auto msg =
-              cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", colormap)
-                  .toImageMsg();
-          msg->header.stamp = time_stamp;
-          disparity_image_publisher_->publish(*msg);
-        }
-      } catch (const cv::Exception& e) {
-        RCLCPP_ERROR(this->get_logger(),
-                     "OpenCV exception during disparity image publishing: %s",
-                     e.what());
+        auto depth_msg =
+            cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", depth_image)
+                .toImageMsg();
+        depth_msg->header.stamp = time_stamp;
+        depth_msg->header.frame_id = "camera_left_optical_frame";
+        depth_image_publisher_->publish(*depth_msg);
       }
-    } else {
-      RCLCPP_WARN(
-          this->get_logger(),
-          "Disparity/depth publisher or image data is not initialized.");
+
+      if (save) {
+        std::ostringstream filename;
+        filename << "monoDisparity_" << count << ".png";
+        cv::Mat disparity_8bit;
+        disparity_image.convertTo(disparity_8bit, CV_8U, 255.0 / 65535.0);
+        cv::imwrite(filename.str(), disparity_8bit);
+      }
+    } catch (const cv::Exception& e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "OpenCV exception during disparity image publishing: %s",
+                   e.what());
     }
   }
 

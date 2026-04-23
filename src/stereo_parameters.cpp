@@ -34,7 +34,7 @@ StereoParameters::StereoParameters() {
   max_speckle_size = 1000;
   max_diff = 4.0;
   // stream settings
-  stream_transmit_flags = {false, false, true, true, true};
+  stream_transmit_flags = {false, false, true, true, true, true};
   // stereo settings
   scan3d_coordinate_offset = 0.0;
   small_penalty = 5;
