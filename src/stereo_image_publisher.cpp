@@ -18,6 +18,7 @@
 
 #include <array>
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -170,8 +171,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
 
     // Set up timer for image acquisition
     timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(
-            static_cast<int>(1000.0 / camera_parameters_.frame_rate)),
+        std::chrono::milliseconds(safe_frame_period_ms()),
         std::bind(&StereoImagePublisherNode::timer_callback, this));
 
     // Initialize the polling timer to call poll_node_map_parameters every 1
@@ -212,8 +212,9 @@ class StereoImagePublisherNode : public rclcpp::Node {
       std::lock_guard<std::mutex> lock(camera_mutex_);
       if (p_cam_) {
         try {
-          if (p_cam_->IsStreaming()) {
+          if (is_streaming_) {
             p_cam_->EndAcquisition();
+            is_streaming_ = false;
           }
         } catch (const Spinnaker::Exception& e) {
           RCLCPP_ERROR(this->get_logger(),
@@ -316,8 +317,41 @@ class StereoImagePublisherNode : public rclcpp::Node {
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr parameter_callback_handle_;
 
-  // Deferred one-shot timers for parameter updates outside callbacks
-  std::vector<rclcpp::TimerBase::SharedPtr> deferred_timers_;
+  // Deferred one-shot timer for parameter updates outside callbacks
+  rclcpp::TimerBase::SharedPtr deferred_param_timer_;
+
+  // Local streaming state to avoid GVCP query on every frame
+  bool is_streaming_{false};
+
+  // Consecutive acquisition failure tracking for disconnect detection
+  int consecutive_failures_{0};
+  static constexpr int kMaxConsecutiveFailures = 10;
+
+  // Safe frame period — guards against division by zero
+  int safe_frame_period_ms() const {
+    float rate = std::max(camera_parameters_.frame_rate, 0.1f);
+    return static_cast<int>(1000.0 / rate);
+  }
+
+  // Schedule deferred parameter updates (cannot call set_parameter inside a
+  // parameter callback). Batches multiple updates into a single timer fire.
+  std::vector<rclcpp::Parameter> pending_deferred_params_;
+
+  void schedule_deferred_param(const rclcpp::Parameter& param) {
+    pending_deferred_params_.push_back(param);
+    if (!deferred_param_timer_) {
+      deferred_param_timer_ = this->create_wall_timer(
+          std::chrono::milliseconds(0),
+          [this]() {
+            for (const auto& p : pending_deferred_params_) {
+              this->set_parameter(p);
+            }
+            pending_deferred_params_.clear();
+            deferred_param_timer_->cancel();
+            deferred_param_timer_.reset();
+          });
+    }
+  }
 
   // Initialize and configure the camera
   bool initialize_camera() {
@@ -427,9 +461,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
       point_cloud_generator.setPointCloudExtents(p_cam_->GetNodeMap(),
                                                  point_cloud_parameters_);
 
-      if (!p_cam_->IsStreaming()) {
+      if (!is_streaming_) {
         RCLCPP_INFO(this->get_logger(), "Begin acquisition...");
         p_cam_->BeginAcquisition();
+        is_streaming_ = true;
       }
 
       // Getting the node map
@@ -1142,11 +1177,6 @@ class StereoImagePublisherNode : public rclcpp::Node {
               "Bumblebee_X/" + serial_number + "/disparity_image",
               stream_qos);
       RCLCPP_INFO(this->get_logger(), "Disparity image publisher created.");
-      depth_image_publisher_ =
-          this->create_publisher<sensor_msgs::msg::Image>(
-              "Bumblebee_X/" + serial_number + "/depth",
-              stream_qos);
-      RCLCPP_INFO(this->get_logger(), "Depth image publisher created.");
     }
 
     if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled &&
@@ -1154,7 +1184,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
       depth_image_publisher_ =
           this->create_publisher<sensor_msgs::msg::Image>(
               "Bumblebee_X/" + serial_number + "/depth_image",
-              rclcpp::QoS(10).transient_local());
+              stream_qos);
       RCLCPP_INFO(this->get_logger(), "Depth image publisher created.");
     }
 
@@ -1178,6 +1208,8 @@ class StereoImagePublisherNode : public rclcpp::Node {
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
     bool updatePublisher = false;
+
+    try {
 
     for (const auto& param : params) {
       const std::string& name = param.get_name();
@@ -1321,34 +1353,14 @@ class StereoImagePublisherNode : public rclcpp::Node {
                  .disparity_transmit_enabled) {
           if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled) {
             camera_parameters_.stream_transmit_flags.depth_transmit_enabled = false;
-            // Defer the parameter update since set_parameter cannot be called
-            // from within a parameter callback
-            size_t idx = deferred_timers_.size();
-            deferred_timers_.push_back(nullptr);
-            deferred_timers_[idx] = this->create_wall_timer(
-                std::chrono::milliseconds(0),
-                [this, idx]() {
-                  this->set_parameter(rclcpp::Parameter("stream.depth_enabled", false));
-                  if (idx < deferred_timers_.size() && deferred_timers_[idx]) {
-                    deferred_timers_[idx]->cancel();
-                  }
-                });
+            schedule_deferred_param(rclcpp::Parameter("stream.depth_enabled", false));
             RCLCPP_WARN(this->get_logger(),
                         "Depth transmission disabled because disparity "
                         "transmission was disabled.");
           }
           if (camera_parameters_.do_compute_point_cloud) {
             camera_parameters_.do_compute_point_cloud = false;
-            size_t pc_idx = deferred_timers_.size();
-            deferred_timers_.push_back(nullptr);
-            deferred_timers_[pc_idx] = this->create_wall_timer(
-                std::chrono::milliseconds(0),
-                [this, pc_idx]() {
-                  this->set_parameter(rclcpp::Parameter("point_cloud.enable", false));
-                  if (pc_idx < deferred_timers_.size() && deferred_timers_[pc_idx]) {
-                    deferred_timers_[pc_idx]->cancel();
-                  }
-                });
+            schedule_deferred_param(rclcpp::Parameter("point_cloud.enable", false));
             RCLCPP_WARN(this->get_logger(),
                         "Point cloud computation disabled because disparity "
                         "transmission was disabled.");
@@ -1366,16 +1378,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
         if (camera_parameters_.stream_transmit_flags.depth_transmit_enabled &&
             !camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
           camera_parameters_.stream_transmit_flags.disparity_transmit_enabled = true;
-          size_t disp_idx = deferred_timers_.size();
-          deferred_timers_.push_back(nullptr);
-          deferred_timers_[disp_idx] = this->create_wall_timer(
-              std::chrono::milliseconds(0),
-              [this, disp_idx]() {
-                this->set_parameter(rclcpp::Parameter("stream.disparity_enabled", true));
-                if (disp_idx < deferred_timers_.size() && deferred_timers_[disp_idx]) {
-                  deferred_timers_[disp_idx]->cancel();
-                }
-              });
+          schedule_deferred_param(rclcpp::Parameter("stream.disparity_enabled", true));
           RCLCPP_INFO(this->get_logger(),
                       "Disparity transmission auto-enabled because depth was enabled.");
         }
@@ -1412,8 +1415,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
               // Reset timer with new frame rate
               timer_->cancel();
               timer_ = this->create_wall_timer(
-                  std::chrono::milliseconds(
-                      static_cast<int>(1000.0 / camera_parameters_.frame_rate)),
+                  std::chrono::milliseconds(safe_frame_period_ms()),
                   std::bind(&StereoImagePublisherNode::timer_callback, this));
             }
           }
@@ -1527,16 +1529,7 @@ class StereoImagePublisherNode : public rclcpp::Node {
         if (camera_parameters_.do_compute_point_cloud &&
             !camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
           camera_parameters_.stream_transmit_flags.disparity_transmit_enabled = true;
-          size_t disp_idx = deferred_timers_.size();
-          deferred_timers_.push_back(nullptr);
-          deferred_timers_[disp_idx] = this->create_wall_timer(
-              std::chrono::milliseconds(0),
-              [this, disp_idx]() {
-                this->set_parameter(rclcpp::Parameter("stream.disparity_enabled", true));
-                if (disp_idx < deferred_timers_.size() && deferred_timers_[disp_idx]) {
-                  deferred_timers_[disp_idx]->cancel();
-                }
-              });
+          schedule_deferred_param(rclcpp::Parameter("stream.disparity_enabled", true));
           RCLCPP_INFO(this->get_logger(),
                       "Disparity transmission auto-enabled because point cloud was enabled.");
         }
@@ -1647,8 +1640,9 @@ class StereoImagePublisherNode : public rclcpp::Node {
       }
       try {
         bool reconfig_ok = true;
-        if (p_cam_->IsStreaming()) {
+        if (is_streaming_) {
           p_cam_->EndAcquisition();
+          is_streaming_ = false;
         }
 
         // if all the streams are disabled, keep the acquisition off
@@ -1704,8 +1698,18 @@ class StereoImagePublisherNode : public rclcpp::Node {
                            "cause issues in timeout.");
             }
 
-            if (!p_cam_->IsStreaming()) {
+            // Recreate timer with the updated frame rate
+            timer_->cancel();
+            timer_ = this->create_wall_timer(
+                std::chrono::milliseconds(safe_frame_period_ms()),
+                std::bind(&StereoImagePublisherNode::timer_callback, this));
+            RCLCPP_INFO(this->get_logger(),
+                        "Timer updated to match resulting frame rate: %f FPS",
+                        camera_parameters_.frame_rate);
+
+            if (!is_streaming_) {
               p_cam_->BeginAcquisition();
+              is_streaming_ = true;
             }
           }
         } else {
@@ -1727,10 +1731,24 @@ class StereoImagePublisherNode : public rclcpp::Node {
       }
     }
 
+    } catch (const Spinnaker::Exception& e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Spinnaker exception in parametersCallback: %s", e.what());
+      result.successful = false;
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Exception in parametersCallback: %s", e.what());
+      result.successful = false;
+    }
+
     return result;
   }
 
   void poll_node_map_parameters() {
+    // Skip polling when camera is not streaming (e.g., during reconnect)
+    // to avoid accessing a camera that may be re-initializing.
+    if (!is_streaming_) return;
+
     // Poll min_disparity (Scan3dCoordinateOffset)
     float scan3d_coordinate_offset;
     if (get_float_value_from_node(*node_map_, "Scan3dCoordinateOffset",
@@ -2066,148 +2084,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
       }
     }
 
-    // Poll raw_sensor_1_transmit_enabled
-    bool raw_sensor1_transmit_enabled =
-        is_raw_sensor_1_transmit_enabled(p_cam_);
-    if (camera_parameters_.stream_transmit_flags
-            .raw_sensor_1_transmit_enabled != raw_sensor1_transmit_enabled) {
-      camera_parameters_.stream_transmit_flags.raw_sensor_1_transmit_enabled =
-          raw_sensor1_transmit_enabled;
-    }
-
-    // Second if: Update ROS parameter if value changed
-    bool current_ros_param_raw_sensor1_transmit_enabled;
-    if (this->get_parameter("stream.raw_left_enabled",
-                            current_ros_param_raw_sensor1_transmit_enabled)) {
-      if (camera_parameters_.stream_transmit_flags
-              .raw_sensor_1_transmit_enabled !=
-          current_ros_param_raw_sensor1_transmit_enabled) {
-        this->set_parameter(rclcpp::Parameter(
-            "stream.raw_left_enabled", camera_parameters_.stream_transmit_flags
-                                           .raw_sensor_1_transmit_enabled));
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "raw_sensor_1_transmit_enabled updated from camera node: %s",
-            camera_parameters_.stream_transmit_flags
-                    .raw_sensor_1_transmit_enabled
-                ? "enabled"
-                : "disabled");
-      }
-    }
-
-    // Poll raw_sensor_2_transmit_enabled
-    bool raw_sensor2_transmit_enabled =
-        is_raw_sensor_2_transmit_enabled(p_cam_);
-    if (camera_parameters_.stream_transmit_flags
-            .raw_sensor_2_transmit_enabled != raw_sensor2_transmit_enabled) {
-      camera_parameters_.stream_transmit_flags.raw_sensor_2_transmit_enabled =
-          raw_sensor2_transmit_enabled;
-    }
-
-    // Second if: Update ROS parameter if value changed
-    bool current_ros_param_raw_sensor2_transmit_enabled;
-    if (this->get_parameter("stream.raw_right_enabled",
-                            current_ros_param_raw_sensor2_transmit_enabled)) {
-      if (camera_parameters_.stream_transmit_flags
-              .raw_sensor_2_transmit_enabled !=
-          current_ros_param_raw_sensor2_transmit_enabled) {
-        this->set_parameter(rclcpp::Parameter(
-            "stream.raw_right_enabled", camera_parameters_.stream_transmit_flags
-                                            .raw_sensor_2_transmit_enabled));
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "raw_sensor_2_transmit_enabled updated from camera node: %s",
-            camera_parameters_.stream_transmit_flags
-                    .raw_sensor_2_transmit_enabled
-                ? "enabled"
-                : "disabled");
-      }
-    }
-
-    // Poll rect_sensor_1_transmit_enabled
-    bool rect_sensor1_transmit_enabled =
-        is_rectified_sensor_1_transmit_enabled(p_cam_);
-    if (camera_parameters_.stream_transmit_flags
-            .rect_sensor_1_transmit_enabled != rect_sensor1_transmit_enabled) {
-      camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled =
-          rect_sensor1_transmit_enabled;
-    }
-
-    // Second if: Update ROS parameter if value changed
-    bool current_ros_param_rect_sensor1_transmit_enabled;
-    if (this->get_parameter("stream.rect_left_enabled",
-                            current_ros_param_rect_sensor1_transmit_enabled)) {
-      if (camera_parameters_.stream_transmit_flags
-              .rect_sensor_1_transmit_enabled !=
-          current_ros_param_rect_sensor1_transmit_enabled) {
-        this->set_parameter(rclcpp::Parameter(
-            "stream.rect_left_enabled", camera_parameters_.stream_transmit_flags
-                                            .rect_sensor_1_transmit_enabled));
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "rect_sensor_1_transmit_enabled updated from camera node: %s",
-            camera_parameters_.stream_transmit_flags
-                    .rect_sensor_1_transmit_enabled
-                ? "enabled"
-                : "disabled");
-      }
-    }
-
-    // Poll rect_sensor_2_transmit_enabled
-    bool rect_sensor2_transmit_enabled =
-        is_rectified_sensor_2_transmit_enabled(p_cam_);
-    if (camera_parameters_.stream_transmit_flags
-            .rect_sensor_2_transmit_enabled != rect_sensor2_transmit_enabled) {
-      camera_parameters_.stream_transmit_flags.rect_sensor_2_transmit_enabled =
-          rect_sensor2_transmit_enabled;
-    }
-
-    // Second if: Update ROS parameter if value changed
-    bool current_ros_param_rect_sensor2_transmit_enabled;
-    if (this->get_parameter("stream.rect_right_enabled",
-                            current_ros_param_rect_sensor2_transmit_enabled)) {
-      if (camera_parameters_.stream_transmit_flags
-              .rect_sensor_2_transmit_enabled !=
-          current_ros_param_rect_sensor2_transmit_enabled) {
-        this->set_parameter(
-            rclcpp::Parameter("stream.rect_right_enabled",
-                              camera_parameters_.stream_transmit_flags
-                                  .rect_sensor_2_transmit_enabled));
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "rect_sensor_2_transmit_enabled updated from camera node: %s",
-            camera_parameters_.stream_transmit_flags
-                    .rect_sensor_2_transmit_enabled
-                ? "enabled"
-                : "disabled");
-      }
-    }
-
-    // Poll disparity_transmit_enabled
-    bool disparity_transmit_enabled = is_disparity_transmit_enabled(p_cam_);
-    if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled !=
-        disparity_transmit_enabled) {
-      camera_parameters_.stream_transmit_flags.disparity_transmit_enabled =
-          disparity_transmit_enabled;
-    }
-
-    // Second if: Update ROS parameter if value changed
-    bool current_ros_param_disparity_transmit_enabled;
-    if (this->get_parameter("stream.disparity_enabled",
-                            current_ros_param_disparity_transmit_enabled)) {
-      if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled !=
-          current_ros_param_disparity_transmit_enabled) {
-        this->set_parameter(rclcpp::Parameter(
-            "stream.disparity_enabled", camera_parameters_.stream_transmit_flags
-                                            .disparity_transmit_enabled));
-        RCLCPP_DEBUG(
-            this->get_logger(),
-            "disparity_transmit_enabled updated from camera node: %s",
-            camera_parameters_.stream_transmit_flags.disparity_transmit_enabled
-                ? "enabled"
-                : "disabled");
-      }
-    }
+    // NOTE: Stream transmit states (raw/rect/disparity) are NOT polled from the
+    // camera here. Those is_*_transmit_enabled() helpers write SourceSelector
+    // to the camera's node map, which can interfere with streaming. Stream
+    // states are tracked locally and updated exclusively via parametersCallback.
 
     // Keep point_cloud.enable ROS parameter in sync with internal state,
     // without modifying parameters inside their own set callback.
@@ -2320,16 +2200,27 @@ class StereoImagePublisherNode : public rclcpp::Node {
     bool save =
         false;  // Set to true if you want to save images and point clouds
 
-    if (p_cam_->IsStreaming()) {
+    if (is_streaming_) {
       // Capture the next set of images from the camera.
       uint64_t timeout_milli_secs =
-          static_cast<uint64_t>((1000.0 / camera_parameters_.frame_rate) * 2.0);
+          static_cast<uint64_t>(safe_frame_period_ms() * 2.0);
       if (!SpinStereo::get_next_image_set(
               p_cam_, camera_parameters_.stream_transmit_flags,
               timeout_milli_secs, image_list)) {
-        RCLCPP_WARN(this->get_logger(), "Failed to get next image set.");
+        consecutive_failures_++;
+        if (consecutive_failures_ >= kMaxConsecutiveFailures) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "%d consecutive image acquisition failures. "
+                       "Camera may be disconnected.",
+                       consecutive_failures_);
+          reconnect_camera();
+          consecutive_failures_ = 0;
+        } else {
+          RCLCPP_WARN(this->get_logger(), "Failed to get next image set.");
+        }
         return;
       }
+      consecutive_failures_ = 0;
 
       ImagePtr disparity_ptr = nullptr;
       if (camera_parameters_.stream_transmit_flags.disparity_transmit_enabled &&
@@ -2547,18 +2438,14 @@ class StereoImagePublisherNode : public rclcpp::Node {
       // Increment count for potential saving
       count++;
 
-      // Check if the camera is still valid
-      if (!p_cam_->IsValid()) {
-        RCLCPP_ERROR(
-            this->get_logger(),
-            "The camera seems to be disconnected. Attempting to reconnect...");
-        // Implement reconnection logic
-        reconnect_camera();
-      }
+      // Explicitly release ImageList to promptly return Spinnaker buffers
+      // to the camera pool. Individual ImagePtrs go out of scope next.
+      image_list.Release();
     }
   }
 
-  // Reconnect camera logic
+  // Reconnect camera logic — runs blocking Spinnaker calls on a separate
+  // thread with a timeout so the executor is never blocked indefinitely.
   void reconnect_camera() {
     // NOTE: timer_callback() already holds camera_mutex_ when calling this.
     if (!p_cam_) {
@@ -2566,26 +2453,58 @@ class StereoImagePublisherNode : public rclcpp::Node {
                    "Reconnect requested but camera handle is null.");
       return;
     }
-    // Attempt to reconnect to the camera
-    try {
-      if (p_cam_->IsStreaming()) {
-        p_cam_->EndAcquisition();
-      }
-      p_cam_->DeInit();
-      p_cam_->Init();
-      if (camera_parameters_.stream_transmit_flags.raw_sensor_1_transmit_enabled ||
-          camera_parameters_.stream_transmit_flags.raw_sensor_2_transmit_enabled ||
-          camera_parameters_.stream_transmit_flags.rect_sensor_1_transmit_enabled ||
-          camera_parameters_.stream_transmit_flags.rect_sensor_2_transmit_enabled ||
-          camera_parameters_.stream_transmit_flags.disparity_transmit_enabled) {
-        p_cam_->BeginAcquisition();
-      }
-      RCLCPP_INFO(this->get_logger(), "Camera reconnected successfully.");
-    } catch (const Spinnaker::Exception& e) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "Exception during camera reconnection: %s", e.what());
-      // Optionally implement retry mechanism or notify user
+
+    RCLCPP_WARN(this->get_logger(),
+                "Camera disconnect detected. Scheduling reconnect...");
+    is_streaming_ = false;
+
+    // Cancel acquisition timer to stop polling while we reconnect
+    if (timer_) {
+      timer_->cancel();
     }
+
+    // Schedule reconnect on a deferred timer so we release the mutex first
+    auto reconnect_timer = this->create_wall_timer(
+        std::chrono::seconds(2),
+        [this]() {
+          std::lock_guard<std::mutex> lock(camera_mutex_);
+          RCLCPP_INFO(this->get_logger(), "Attempting camera reconnect...");
+
+          auto task = std::async(std::launch::async, [this]() {
+            try {
+              p_cam_->DeInit();
+              p_cam_->Init();
+              return true;
+            } catch (const Spinnaker::Exception& e) {
+              return false;
+            }
+          });
+
+          // Wait up to 10 seconds for the reconnect
+          if (task.wait_for(std::chrono::seconds(10)) == std::future_status::ready
+              && task.get()) {
+            try {
+              p_cam_->BeginAcquisition();
+              is_streaming_ = true;
+              node_map_ = &(p_cam_->GetNodeMap());
+              timer_ = this->create_wall_timer(
+                  std::chrono::milliseconds(safe_frame_period_ms()),
+                  std::bind(&StereoImagePublisherNode::timer_callback, this));
+              RCLCPP_INFO(this->get_logger(), "Camera reconnected successfully.");
+            } catch (const Spinnaker::Exception& e) {
+              RCLCPP_ERROR(this->get_logger(),
+                           "Failed to restart acquisition after reconnect: %s",
+                           e.what());
+            }
+          } else {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Camera reconnect timed out or failed. "
+                         "Will retry in 2 seconds.");
+          }
+        });
+    // Store the timer so it stays alive; it will self-repeat every 2s until
+    // reconnect succeeds. Replace the acquisition timer slot.
+    timer_ = reconnect_timer;
   }
 
   // Publish ROS Image message
@@ -2648,10 +2567,10 @@ class StereoImagePublisherNode : public rclcpp::Node {
           return;
       }
 
-      auto msg =
-          cv_bridge::CvImage(std_msgs::msg::Header(), encoding, cvImage).toImageMsg();
+      auto msg = std::make_unique<sensor_msgs::msg::Image>();
+      cv_bridge::CvImage(std_msgs::msg::Header(), encoding, cvImage).toImageMsg(*msg);
       msg->header.stamp = time_stamp;
-      publisher->publish(*msg);
+      publisher->publish(std::move(msg));
 
     } catch (const cv::Exception& e) {
       RCLCPP_ERROR(this->get_logger(),
@@ -2680,12 +2599,12 @@ class StereoImagePublisherNode : public rclcpp::Node {
                               disparity_image_ptr->GetStride());
 
       // Publish raw disparity as 16UC1
-      auto disparity_msg =
-          cv_bridge::CvImage(std_msgs::msg::Header(), "16UC1", disparity_image)
-              .toImageMsg();
+      auto disparity_msg = std::make_unique<sensor_msgs::msg::Image>();
+      cv_bridge::CvImage(std_msgs::msg::Header(), "16UC1", disparity_image)
+          .toImageMsg(*disparity_msg);
       disparity_msg->header.stamp = time_stamp;
       disparity_msg->header.frame_id = "camera_left_optical_frame";
-      disparity_image_publisher_->publish(*disparity_msg);
+      disparity_image_publisher_->publish(std::move(disparity_msg));
 
       // Publish depth image as 32FC1 (meters) if enabled
       if (depth_image_publisher_) {
@@ -2697,12 +2616,12 @@ class StereoImagePublisherNode : public rclcpp::Node {
             stereo_parameters_.baseline,
             20.0f);
 
-        auto depth_msg =
-            cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", depth_image)
-                .toImageMsg();
+        auto depth_msg = std::make_unique<sensor_msgs::msg::Image>();
+        cv_bridge::CvImage(std_msgs::msg::Header(), "32FC1", depth_image)
+            .toImageMsg(*depth_msg);
         depth_msg->header.stamp = time_stamp;
         depth_msg->header.frame_id = "camera_left_optical_frame";
-        depth_image_publisher_->publish(*depth_msg);
+        depth_image_publisher_->publish(std::move(depth_msg));
       }
 
       if (save) {
@@ -2724,11 +2643,11 @@ class StereoImagePublisherNode : public rclcpp::Node {
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud_ptr,
       rclcpp::Time time_stamp, bool save, int count) {
     if (point_cloud_publisher_) {
-      sensor_msgs::msg::PointCloud2 msg;
-      pcl::toROSMsg(*point_cloud_ptr, msg);
-      msg.header.frame_id = "camera_link";
-      msg.header.stamp = time_stamp;
-      point_cloud_publisher_->publish(msg);
+      auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+      pcl::toROSMsg(*point_cloud_ptr, *msg);
+      msg->header.frame_id = "camera_link";
+      msg->header.stamp = time_stamp;
+      point_cloud_publisher_->publish(std::move(msg));
 
       if (save) {
         std::ostringstream filename;
