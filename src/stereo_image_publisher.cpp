@@ -23,7 +23,11 @@
 #include <thread>
 #include <vector>
 
+#if __has_include(<cv_bridge/cv_bridge.hpp>)
+#include <cv_bridge/cv_bridge.hpp>
+#else
 #include <cv_bridge/cv_bridge.h>
+#endif
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>

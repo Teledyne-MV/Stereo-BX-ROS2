@@ -8,7 +8,7 @@ This package provides a stereo image publisher for Spinnaker-based Bumblebee X s
   - [Table of Contents](#table-of-contents)
   - [System Requirements](#system-requirements)
   - [Installation Steps](#installation-steps)
-    - [1. Install ROS 2 Humble](#1-install-ros-2-humble)
+    - [1. Install ROS 2](#1-install-ros-2)
     - [2. Install Dependencies](#2-install-dependencies)
       - [OpenCV](#opencv)
       - [PCL (Point Cloud Library)](#pcl-point-cloud-library)
@@ -25,18 +25,38 @@ This package provides a stereo image publisher for Spinnaker-based Bumblebee X s
 ---
 
 ## System Requirements
-- **OS**: Ubuntu 22.04 LTS
-- **ROS 2 Distribution**: Humble Hawksbill
+- **OS**: Ubuntu 22.04 LTS, Ubuntu 24.04
+- **ROS 2 Distribution**: Humble Hawksbill, Jazzy Jalisco
 - **Compiler**: GCC 9 or newer
 - **Hardware**: BumbleBee X FLIR cameras
 - **Spinnaker SDK**: Spinnaker SDK v4.1.0.3xx or above
+
+Supported combinations:
+
+| OS | ROS 2 distribution | Spinnaker SDK |
+| --- | --- | --- |
+| Ubuntu 22.04 LTS | Humble Hawksbill | 4.1.0.3xx |
+| Ubuntu 24.04 LTS | Jazzy Jalisco | 4.4.0.x or newer |
 
 ---
 
 ## Installation Steps
 
-### 1. Install ROS 2 Humble
-Follow these steps to install ROS 2 Humble on Ubuntu 22.04:
+### 1. Install ROS 2
+Use the ROS 2 distribution that matches your Ubuntu version:
+
+- Ubuntu 22.04: `humble`
+- Ubuntu 24.04: `jazzy`
+
+Set the distro name once before running the commands below:
+
+```bash
+# Ubuntu 22.04
+export ROS_DISTRO=humble
+
+# Ubuntu 24.04
+export ROS_DISTRO=jazzy
+```
 
 ```bash
 # Set locale
@@ -53,12 +73,12 @@ curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo 
 # *Warning: apt-key is deprecated. Manage keyring files in trusted.gpg.d instead (see apt-key(8)).
 sudo apt-add-repository http://packages.ros.org/ros2/ubuntu
 
-# Install ROS 2 Humble
+# Install ROS 2 distribution
 sudo apt update
-sudo apt install ros-humble-desktop
+sudo apt install ros-${ROS_DISTRO}-desktop
 
 # Source the ROS 2 environment
-source /opt/ros/humble/setup.bash
+source /opt/ros/${ROS_DISTRO}/setup.bash
 
 # Install development tools and dependencies for building ROS packages
 sudo apt install python3-rosdep python3-colcon-common-extensions
@@ -79,8 +99,10 @@ nano ~/.bashrc
 
 2. Add the following line at the end of the file:
 ```bash
-source /opt/ros/humble/setup.bash
+source /opt/ros/<ros-distro>/setup.bash
 ```
+
+Use `humble` for Ubuntu 22.04 or `jazzy` for Ubuntu 24.04.
 
 3. Save the changes and close the editor.
 
@@ -95,7 +117,7 @@ If sourcing ROS is not added to `.bashrc`, ROS should be sourced manually on eve
 
 ```bash
 # source ROS environment
-source /opt/ros/humble/setup.bash
+source /opt/ros/<ros-distro>/setup.bash
 ```
 
 ### 2. Install Dependencies
@@ -103,13 +125,13 @@ source /opt/ros/humble/setup.bash
 #### OpenCV
 ```bash
 sudo apt install libopencv-dev
-sudo apt-get install ros-humble-cv-bridge
+sudo apt-get install ros-${ROS_DISTRO}-cv-bridge
 ```
 
 #### PCL (Point Cloud Library)
 ```bash
 sudo apt install libpcl-dev
-sudo apt-get install ros-humble-pcl-ros
+sudo apt-get install ros-${ROS_DISTRO}-pcl-ros
 ```
 
 #### Spinnaker SDK (for Teledyne FLIR cameras)
@@ -254,11 +276,12 @@ ros2 run bumblebee_ros stereo_image_publisher <serial_number>
 2. **ROS2 Not Found:**
    - Ensure ROS2 is sourced:
      ```bash
-     source /opt/ros/humble/setup.bash
+     source /opt/ros/<ros-distro>/setup.bash
      ```
 
 3. **Missing Dependencies:**
    - Ensure all required ROS2 and Spinnaker libraries are installed.
+   - Note that only Spinnaker 4.4.0.x+ has a Linux Ubuntu 24.04 release. Use Spinnaker 4.1.0.3xx with Ubuntu 22.04/Humble and Spinnaker 4.4.0.x or newer with Ubuntu 24.04/Jazzy.
 
 4. **Stream Issues:**
    - Ensure the camera is properly initialized and all required streams are enabled via dynamic reconfiguration.
@@ -267,7 +290,8 @@ ros2 run bumblebee_ros stereo_image_publisher <serial_number>
 
 ## Additional Resources
 
-- [ROS2 Documentation](https://docs.ros.org/en/humble/index.html)
+- [ROS2 Humble Documentation](https://docs.ros.org/en/humble/index.html)
+- [ROS2 Jazzy Documentation](https://docs.ros.org/en/jazzy/index.html)
 - [Spinnaker SDK Documentation](https://www.flir.com/support-center/iis/machine-vision/downloads/spinnaker-sdk-and-firmware-download/)
 - [OpenCV Documentation](https://docs.opencv.org/master/)
 
